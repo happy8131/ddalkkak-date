@@ -1,0 +1,78 @@
+# 로컬 개발 환경: frontend + backend + postgres
+# 실행: docker compose up --build   (자세한 내용은 README.md)
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ddalkkak}
+      POSTGRES_USER: ${POSTGRES_USER:-ddalkkak}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ddalkkak}
+    ports:
+      # 호스트에 이미 PostgreSQL이 5432를 쓰는 경우가 많아 기본값을 5433으로 둔다
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-ddalkkak}
+      DB_USERNAME: ${POSTGRES_USER:-ddalkkak}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-ddalkkak}
+      GRADLE_USER_HOME: /gradle-cache
+    ports:
+      - "${BACKEND_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./backend:/workspace
+      - gradle_cache:/gradle-cache
+    # `docker compose up --watch`로 실행하면 소스 변경 시 컨테이너를 재시작해 bootRun이 다시 컴파일한다.
+    # 컨테이너 안의 Gradle은 Windows/macOS 바인드 마운트의 변경 이벤트를 받지 못하므로 호스트 쪽 감시를 쓴다.
+    develop:
+      watch:
+        - action: restart
+          path: ./backend/src
+        - action: restart
+          path: ./backend/build.gradle
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      # 브라우저가 호출하는 주소이므로 컨테이너 이름이 아니라 호스트 주소를 쓴다
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_HOST_PORT:-8080}
+      # Windows/macOS 바인드 마운트에서는 파일 변경 이벤트가 전달되지 않아 폴링한다 (next.config.ts)
+      NEXT_WATCH_POLL_MS: "1000"
+    ports:
+      - "${FRONTEND_HOST_PORT:-3000}:3000"
+    volumes:
+      - ./frontend:/app
+      # 호스트(Windows)의 node_modules/.next와 섞이지 않도록 컨테이너 전용 볼륨을 쓴다
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  gradle_cache:
+  frontend_node_modules:
+  frontend_next:

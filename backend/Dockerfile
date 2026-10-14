@@ -1,3 +1,9 @@
+# 로컬 개발용 (docker compose에서 target: dev로 사용, 소스는 볼륨으로 마운트)
+FROM eclipse-temurin:17-jdk AS dev
+WORKDIR /workspace
+EXPOSE 8080
+CMD ["./gradlew", "bootRun", "--console=plain"]
+
 # 1단계: 빌드
 FROM eclipse-temurin:17-jdk AS build
 WORKDIR /workspace
