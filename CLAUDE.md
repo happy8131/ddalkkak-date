@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 구현 상태
 
-- 구현된 것: `frontend/` (KAN-37)
-- 아직 없는 것: `backend/` (KAN-38), `docker-compose.yml` (KAN-39), `infra/` (KAN-40~)
+- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38)
+- 아직 없는 것: `docker-compose.yml` (KAN-39), `infra/` (KAN-40~)
 - 루트(`ddalkkak-date/`) 하나의 git 저장소로 `frontend/`, `backend/`, `infra/`를 함께 관리합니다. 기본 브랜치는 `main`입니다.
 - 아래 "목표 아키텍처"는 `prd.md` 기준 계획이므로, 코드를 작성하기 전에 해당 디렉터리가 실제로 존재하는지 확인하세요.
 
@@ -35,6 +35,30 @@ npx prettier --write .   # 포맷팅 (2칸 들여쓰기, Tailwind 클래스 정�
 - 백엔드 호출은 `lib/api.ts`에 모으고 주소는 `lib/env.ts`의 `API_BASE_URL`을 통해서만 읽습니다.
 - Tailwind v4는 `tailwind.config` 없이 `app/globals.css`의 `@theme inline`에서 토큰을 정의합니다. PRD 컬러는 Primary `#FF6B6B`, Secondary `#4ECDC4`, 배경 `#FFFBF0`, 글자 `#2D3436`입니다.
 - `frontend/AGENTS.md`는 Next.js 버전 차이에 주의하라고 안내합니다. 이 버전의 API가 낯설면 `frontend/node_modules/next/dist/docs/`의 문서를 참고하세요.
+
+## 명령어 (backend/)
+
+`backend/` 안에서 실행합니다. Java 17이 필요합니다.
+
+```bash
+./gradlew bootRun                                  # 실행 (기본 프로파일 local, localhost:5432의 PostgreSQL 필요)
+./gradlew test                                     # 전체 테스트 (DB 연동 테스트는 Docker 필요)
+./gradlew test --tests '*ApiWebLayerTest'          # 단일 테스트 클래스 (Docker 불필요)
+./gradlew test --tests '*ApiWebLayerTest.메서드명'   # 단일 테스트 메서드
+./gradlew bootJar -x test                          # 실행 jar 생성
+docker build -t ddalkkak-backend backend/          # 멀티 스테이지 이미지 (프로파일 prod)
+```
+
+## 백엔드 구조
+
+- Spring Boot 4.1 (Java 17, Gradle) + JPA + Flyway + PostgreSQL. 패키지는 `com.ddalkkak.date`이고 `controller / service / repository / domain / config / common`으로 나눕니다.
+- 스키마는 Flyway(`src/main/resources/db/migration`)로만 바꿉니다. `ddl-auto`는 `validate`라서 엔티티와 스키마가 다르면 기동이 실패합니다.
+- `controller` 패키지의 모든 컨트롤러에는 `WebConfig`가 `/api/v1` 접두사를 자동으로 붙입니다. 컨트롤러에는 `/api/v1`을 직접 쓰지 않습니다.
+- 응답은 `ApiResponse`(`success/data/error`)로 통일합니다. `GlobalExceptionHandler`가 `BusinessException`, 검증 오류, 스프링 MVC 표준 예외(404/405 등), 그 외 예외를 같은 형식으로 변환합니다.
+- 프로파일은 `local`(기본)과 `prod`입니다. `prod`는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `CORS_ALLOWED_ORIGINS`를 환경 변수로 받으며 기본값이 없어서 빠지면 기동에 실패합니다.
+- CORS 허용 출처는 `app.cors.allowed-origins` 하나로 `/api/v1/**`와 `/actuator/**`에 함께 적용합니다.
+- `/actuator/health`는 `/api/v1` 밖에 있습니다. ALB가 `/api/*`만 백엔드로 보내므로, 배포 환경에서 브라우저가 이 경로를 직접 호출하면 프론트엔드로 가게 됩니다. 프론트엔드 `/health` 페이지의 운영 호출 경로는 인프라 작업(KAN-45)에서 정해야 합니다.
+- 로컬에 PostgreSQL이 이미 5432를 쓰고 있으면 `DB_URL`로 다른 포트를 지정하세요.
 
 ## 목표 아키텍처 (prd.md 기준, 대부분 미구현)
 
