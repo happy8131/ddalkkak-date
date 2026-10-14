@@ -1,0 +1,17 @@
+# 로컬 개발용 (docker-compose의 postgres와 맞춘다 - KAN-39)
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/ddalkkak}
+    username: ${DB_USERNAME:ddalkkak}
+    password: ${DB_PASSWORD:ddalkkak}
+  jpa:
+    show-sql: true
+
+app:
+  cors:
+    allowed-origins: http://localhost:3000
+
+management:
+  endpoint:
+    health:
+      show-details: always

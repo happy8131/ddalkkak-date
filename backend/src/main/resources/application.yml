@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: ddalkkak-backend
+  profiles:
+    default: local
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate # 스키마는 Flyway로만 변경한다
+  flyway:
+    enabled: true
+
+server:
+  port: 8080
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+      cors:
+        allowed-origins: ${app.cors.allowed-origins}
+        allowed-methods: GET
+  endpoint:
+    health:
+      probes:
+        enabled: true
