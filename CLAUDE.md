@@ -8,10 +8,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 구현 상태
 
-- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38)
-- 아직 없는 것: `docker-compose.yml` (KAN-39), `infra/` (KAN-40~)
+- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39)
+- 아직 없는 것: `infra/` (KAN-40~)
 - 루트(`ddalkkak-date/`) 하나의 git 저장소로 `frontend/`, `backend/`, `infra/`를 함께 관리합니다. 기본 브랜치는 `main`입니다.
 - 아래 "목표 아키텍처"는 `prd.md` 기준 계획이므로, 코드를 작성하기 전에 해당 디렉터리가 실제로 존재하는지 확인하세요.
+
+## 명령어 (루트, Docker Compose)
+
+```bash
+docker compose up -d --build   # frontend(3000) + backend(8080) + postgres(호스트 5433) 기동
+docker compose watch           # 기동 + 백엔드 소스 변경 시 컨테이너 재시작
+docker compose down            # 종료 (DB 볼륨 유지), 데이터까지 지우려면 down -v
+```
+
+- 연동 확인은 http://localhost:3000/health 입니다. 백엔드 헬스체크가 DB 상태를 포함하므로 FE → BE → DB가 모두 정상이어야 "UP"이 나옵니다.
+- 호스트의 PostgreSQL이 5432를 쓰는 경우가 많아서 컨테이너 DB의 호스트 포트는 5433입니다. 포트와 DB 계정은 `.env`(`.env.example` 참고)로 바꿉니다.
+- compose의 `frontend`, `backend`는 각 Dockerfile의 `dev` 타깃을 쓰고 소스를 바인드 마운트합니다. Dockerfile의 기본(마지막) 타깃은 운영용이며 이후 CI/CD(KAN-50)가 사용합니다. 프론트엔드 운영 이미지는 `--build-arg NEXT_PUBLIC_API_BASE_URL=...`이 필요합니다.
+- 프론트엔드 핫 리로드는 `NEXT_WATCH_POLL_MS`(next.config.ts)로 켠 폴링에 의존합니다. Next.js는 `WATCHPACK_POLLING`을 읽지 않습니다.
+- 백엔드 핫 리로드는 `docker compose watch`가 `backend/src`와 `build.gradle` 변경을 감지해 재시작하는 방식입니다(약 30~40초). `sed -i`처럼 파일을 교체하는 방식의 변경은 감지되지 않을 수 있습니다.
 
 ## 명령어 (frontend/)
 
