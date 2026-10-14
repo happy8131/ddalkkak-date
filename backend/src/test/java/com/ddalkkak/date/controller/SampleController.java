@@ -3,16 +3,28 @@ package com.ddalkkak.date.controller;
 import com.ddalkkak.date.common.ApiResponse;
 import com.ddalkkak.date.common.exception.BusinessException;
 import com.ddalkkak.date.common.exception.ErrorCode;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 // /api/v1 접두사와 공통 응답/예외 형식을 검증하기 위한 테스트 전용 컨트롤러
 @RestController
 class SampleController {
 
+  record SampleRequest(@NotBlank String name, @Min(1) int count) {}
+
   @GetMapping("/sample/ok")
   ApiResponse<String> ok() {
     return ApiResponse.ok("pong");
+  }
+
+  @PostMapping("/sample/echo")
+  ApiResponse<String> echo(@Valid @RequestBody SampleRequest request) {
+    return ApiResponse.ok(request.name() + ":" + request.count());
   }
 
   @GetMapping("/sample/business-error")

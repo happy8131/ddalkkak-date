@@ -1,7 +1,9 @@
 package com.ddalkkak.date.controller;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -13,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 // DB 없이 웹 계층만 검증한다 (접두사, 응답 형식, 예외 처리, CORS)
@@ -53,6 +56,49 @@ class ApiWebLayerTest {
         .andExpect(status().isInternalServerError())
         .andExpect(jsonPath("$.error.code").value("INTERNAL_ERROR"))
         .andExpect(jsonPath("$.error.message").value("서버 오류가 발생했습니다."));
+  }
+
+  @Test
+  void 유효한_POST_본문은_처리된다() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/sample/echo")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"성수\",\"count\":2}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data").value("성수:2"));
+  }
+
+  @Test
+  void 검증에_실패한_POST_본문은_400과_필드_메시지를_반환한다() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/sample/echo")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"\",\"count\":0}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"))
+        .andExpect(jsonPath("$.error.message").isNotEmpty());
+  }
+
+  @Test
+  void 깨진_JSON은_400으로_변환된다() throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/sample/echo")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{not-json"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+  }
+
+  @Test
+  void 지원하지_않는_메서드는_405로_변환된다() throws Exception {
+    mockMvc
+        .perform(delete("/api/v1/sample/ok"))
+        .andExpect(status().isMethodNotAllowed())
+        .andExpect(jsonPath("$.success").value(false));
   }
 
   @Test
