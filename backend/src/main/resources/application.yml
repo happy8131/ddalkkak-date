@@ -3,6 +3,8 @@ spring:
     name: ddalkkak-backend
   profiles:
     default: local
+  jackson:
+    property-naming-strategy: SNAKE_CASE # API JSON 필드는 snake_case (PRD API 스펙)
   jpa:
     open-in-view: false
     hibernate:

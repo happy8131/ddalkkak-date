@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 구현 상태
 
-- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39)
+- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39), 코스 생성 API `POST /api/v1/courses/generate` (KAN-13)
 - 아직 없는 것: `infra/` (KAN-40~)
 - 루트(`ddalkkak-date/`) 하나의 git 저장소로 `frontend/`, `backend/`, `infra/`를 함께 관리합니다. 기본 브랜치는 `main`입니다.
 - 아래 "목표 아키텍처"는 `prd.md` 기준 계획이므로, 코드를 작성하기 전에 해당 디렉터리가 실제로 존재하는지 확인하세요.
@@ -68,10 +68,14 @@ docker build -t ddalkkak-backend backend/          # 멀티 스테이지 이미�
 - Spring Boot 4.1 (Java 17, Gradle) + JPA + Flyway + PostgreSQL. 패키지는 `com.ddalkkak.date`이고 `controller / service / repository / domain / config / common`으로 나눕니다.
 - 스키마는 Flyway(`src/main/resources/db/migration`)로만 바꿉니다. `ddl-auto`는 `validate`라서 엔티티와 스키마가 다르면 기동이 실패합니다.
 - `controller` 패키지의 모든 컨트롤러에는 `WebConfig`가 `/api/v1` 접두사를 자동으로 붙입니다. 컨트롤러에는 `/api/v1`을 직접 쓰지 않습니다.
+- API JSON 필드는 `spring.jackson.property-naming-strategy: SNAKE_CASE`로 전역 snake_case입니다(PRD 스펙과 동일). DTO에 `@JsonProperty`를 따로 달지 않습니다. 검증 오류 메시지의 필드명도 snake_case로 바꿔서 보여줍니다.
 - 응답은 `ApiResponse`(`success/data/error`)로 통일합니다. `GlobalExceptionHandler`가 `BusinessException`, 검증 오류, 스프링 MVC 표준 예외(404/405 등), 그 외 예외를 같은 형식으로 변환합니다.
 - 프로파일은 `local`(기본)과 `prod`입니다. `prod`는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `CORS_ALLOWED_ORIGINS`를 환경 변수로 받으며 기본값이 없어서 빠지면 기동에 실패합니다.
 - CORS 허용 출처는 `app.cors.allowed-origins` 하나로 `/api/v1/**`와 `/actuator/**`에 함께 적용합니다.
 - `/actuator/health`는 `/api/v1` 밖에 있습니다. ALB가 `/api/*`만 백엔드로 보내므로, 배포 환경에서 브라우저가 이 경로를 직접 호출하면 프론트엔드로 가게 됩니다. 프론트엔드 `/health` 페이지의 운영 호출 경로는 인프라 작업(KAN-45)에서 정해야 합니다.
+- 코스 생성: `CourseController` → `CourseGenerationService` → `CourseRecommender`. 지금 빈은 `SampleCourseRecommender`(가짜 장소, 제목 `[샘플]`, `place_id`는 `sample-`)뿐이고, KAN-14에서 AI 추천 엔진 빈을 추가하면서 삭제합니다. 추천 호출은 트랜잭션 밖에서 하고 `course_requests`/`courses` 저장만 한 트랜잭션으로 묶습니다.
+- 비로그인 사용자는 `GuestIdCookie`가 발급하는 `guest_id` 쿠키(UUID, HttpOnly·Secure·SameSite=Lax, 1년)로 식별합니다. 값이 UUID 형식이 아니면 새로 발급합니다.
+- 지역·데이트 유형은 `Region`/`DateType` enum의 한글 표기(`홍대`, `문화데이트`)로 주고받고 DB에도 한글 표기로 저장합니다. 요청 검증은 `@OneOfLabels`를 씁니다.
 - 로컬에 PostgreSQL이 이미 5432를 쓰고 있으면 `DB_URL`로 다른 포트를 지정하세요.
 
 ## 목표 아키텍처 (prd.md 기준, 대부분 미구현)
