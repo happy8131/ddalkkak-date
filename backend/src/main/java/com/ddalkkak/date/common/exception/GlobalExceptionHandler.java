@@ -43,11 +43,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
       WebRequest request) {
     String message =
         e.getBindingResult().getFieldErrors().stream()
-            .map(error -> error.getField() + ": " + error.getDefaultMessage())
+            .map(error -> toSnakeCase(error.getField()) + ": " + error.getDefaultMessage())
             .findFirst()
             .orElse(ErrorCode.INVALID_REQUEST.getMessage());
     return ResponseEntity.status(ErrorCode.INVALID_REQUEST.getStatus())
         .body(ApiResponse.fail(ErrorCode.INVALID_REQUEST.name(), message));
+  }
+
+  // API JSON 필드가 snake_case이므로 오류 메시지의 필드명도 요청 본문과 같은 이름으로 보여준다
+  private static String toSnakeCase(String field) {
+    return field.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase();
   }
 
   // 표준 MVC 예외가 모두 이 메서드를 거치므로 여기서 응답 본문을 통일한다
