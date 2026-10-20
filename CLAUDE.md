@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 구현 상태
 
-- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39), 코스 생성 API `POST /api/v1/courses/generate` (KAN-13)
+- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39), 코스 생성 API `POST /api/v1/courses/generate` (KAN-13), 장소 수집 배치 + AI 큐레이션 (KAN-16)
 - 아직 없는 것: `infra/` (KAN-40~)
 - 루트(`ddalkkak-date/`) 하나의 git 저장소로 `frontend/`, `backend/`, `infra/`를 함께 관리합니다. 기본 브랜치는 `main`입니다.
 - 아래 "목표 아키텍처"는 `prd.md` 기준 계획이므로, 코드를 작성하기 전에 해당 디렉터리가 실제로 존재하는지 확인하세요.
@@ -77,6 +77,12 @@ docker build -t ddalkkak-backend backend/          # 멀티 스테이지 이미�
 - 비로그인 사용자는 `GuestIdCookie`가 발급하는 `guest_id` 쿠키(UUID, HttpOnly·Secure·SameSite=Lax, 1년)로 식별합니다. 값이 UUID 형식이 아니면 새로 발급합니다.
 - 지역·데이트 유형은 `Region`/`DateType` enum의 한글 표기(`홍대`, `문화데이트`)로 주고받고 DB에도 한글 표기로 저장합니다. 요청 검증은 `@OneOfLabels`를 씁니다.
 - 로컬에 PostgreSQL이 이미 5432를 쓰고 있으면 `DB_URL`로 다른 포트를 지정하세요.
+- 장소 수집 배치(KAN-16): `PlaceCollectionRunner`(`batch/`)가 5대 상권 × 최대 100곳을 카카오 Local API 키워드 검색(`KakaoPlaceClient`)으로 모아 `places`에 `kakao_place_id` 기준으로 upsert하고, 아직 큐레이션이 없는 장소를 `PlaceCurationService`(LLM)로 분석해 `date_score`, `mood_tags`, `price_range`, `best_time`, `recommendation`을 채웁니다. 네이버 지역 검색은 쓰지 않으므로 `trust_score`는 비워 둡니다. 주 1회 갱신(ECS Scheduled Task)은 같은 이미지를 `SPRING_PROFILES_ACTIVE=prod,batch`와 `APP_BATCH_PLACE_COLLECTION_ENABLED=true`로 실행하면 됩니다. `batch` 프로파일은 웹 서버 없이 러너만 돌리고 종료합니다.
+  - 실행 예: `KAKAO_REST_API_KEY=... LLM_API_KEY=... ./gradlew bootRun --args='--spring.profiles.active=local,batch --app.batch.place-collection.enabled=true'`
+  - LLM은 기본이 OpenAI 호환 `chat/completions`(`OpenAiCompatibleClient`)이고, `LLM_BASE_URL`(기본 Groq `https://api.groq.com/openai/v1`), `LLM_MODEL`(기본 `qwen/qwen3.8-27b`), `LLM_API_KEY`로 Groq·AIMLAPI 등을 바꿔 씁니다. `AI_PROVIDER=anthropic`이면 `ANTHROPIC_API_KEY`/`ANTHROPIC_MODEL`로 Claude를 씁니다. 무료 한도를 넘지 않도록 호출 사이에 `app.llm.min-interval-ms`(기본 5500ms) 간격을 두고, 429에 `Retry-After`가 65초 이하로 오면 그만큼 쉬고 최대 3번 재시도합니다. Groq 무료 한도(분당 8,000토큰)는 `max_tokens`(기본 350)를 응답 예약분으로 미리 계산하므로 `max_tokens`를 크게 잡으면 호출 수가 크게 줄어듭니다.
+  - 큐레이션 응답이 JSON 규칙에 어긋나면 1회 재시도하고, 그래도 실패한 장소는 건너뛰며 배치는 실패로 종료합니다(다음 실행에서 다시 시도). 호출 한도(429)에 걸리면 실패로 세지 않고 큐레이션을 멈춰서 남은 장소를 다음 실행에서 이어 처리합니다.
+  - 가격/소요시간 수작업 큐레이션 import: `--app.batch.place-import.file=curation.csv` (헤더 `kakao_place_id,price_range,estimated_time[,is_alcohol]`). import된 장소는 `is_manual_curated=true`가 되어 AI 큐레이션과 재수집이 가격·소요시간·주류 여부를 덮어쓰지 않습니다.
+  - 카카오 키워드 검색은 질의당 최대 45개라서 상권마다 질의 10개(맛집, 카페, 술집 등)를 번갈아 합쳐 100곳을 채웁니다. 주류 업종(`is_alcohol`)은 카카오 카테고리명으로 판별합니다.
 
 ## 목표 아키텍처 (prd.md 기준, 대부분 미구현)
 

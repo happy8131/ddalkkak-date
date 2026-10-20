@@ -1,0 +1,5 @@
+# 배치 실행용 프로파일 (장소 수집/import). 웹 서버 없이 러너만 실행하고 끝나면 종료한다 - KAN-16
+# 예: SPRING_PROFILES_ACTIVE=prod,batch APP_BATCH_PLACE_COLLECTION_ENABLED=true
+spring:
+  main:
+    web-application-type: none
