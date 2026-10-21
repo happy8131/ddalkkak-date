@@ -1,0 +1,262 @@
+# 모듈 내부 리소스의 세부 설정을 검증하는 테스트 (mock provider, AWS 호출 없음).
+# 실행: cd infra/envs/prod && terraform init && terraform test
+
+mock_provider "aws" {
+  mock_data "aws_availability_zones" {
+    defaults = {
+      names = ["us-east-1a", "us-east-1b", "us-east-1c"]
+    }
+  }
+
+  mock_data "aws_iam_policy_document" {
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+
+  # provider 가 ARN 형식을 검사하므로 mock 이 만드는 ARN 은 올바른 형식으로 지정한다
+  mock_resource "aws_sns_topic" {
+    defaults = { arn = "arn:aws:sns:us-east-1:123456789012:mock-topic" }
+  }
+
+  mock_resource "aws_iam_role" {
+    defaults = { arn = "arn:aws:iam::123456789012:role/mock-role" }
+  }
+
+  mock_resource "aws_lb" {
+    defaults = {
+      arn        = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/mock-alb/0123456789abcdef"
+      arn_suffix = "app/mock-alb/0123456789abcdef"
+      dns_name   = "mock-alb-123456789.us-east-1.elb.amazonaws.com"
+    }
+  }
+
+  mock_resource "aws_lb_target_group" {
+    defaults = {
+      arn        = "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/mock-tg/0123456789abcdef"
+      arn_suffix = "targetgroup/mock-tg/0123456789abcdef"
+    }
+  }
+
+  mock_resource "aws_lb_listener" {
+    defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/mock-alb/0123456789abcdef/0123456789abcdef" }
+  }
+}
+
+variables {
+  owner = "tester"
+}
+
+# --- network ---
+
+run "network" {
+  command = apply
+
+  module {
+    source = "../../modules/network"
+  }
+
+  variables {
+    name_prefix = "test"
+  }
+
+  assert {
+    condition     = length(aws_subnet.public) == 2 && length(aws_subnet.private_app) == 2 && length(aws_subnet.private_db) == 2
+    error_message = "서브넷은 계층(public, private_app, private_db)마다 2개 AZ 에 있어야 합니다."
+  }
+
+  # RDS 는 ECS 태스크 보안 그룹에서 오는 5432 만 허용한다
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.rds_postgres.from_port == 5432 && aws_vpc_security_group_ingress_rule.rds_postgres.cidr_ipv4 == null
+    error_message = "RDS 는 보안 그룹 참조로만 접근을 허용해야 합니다."
+  }
+
+  # ECS 태스크는 ALB 보안 그룹에서 오는 트래픽만 받는다 (인터넷 CIDR 직접 허용 금지)
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.app_frontend.cidr_ipv4 == null && aws_vpc_security_group_ingress_rule.app_backend.cidr_ipv4 == null
+    error_message = "ECS 태스크 보안 그룹이 인터넷에 열려 있습니다."
+  }
+}
+
+# --- rds ---
+
+run "rds" {
+  command = apply
+
+  module {
+    source = "../../modules/rds"
+  }
+
+  variables {
+    name_prefix       = "test"
+    subnet_ids        = ["subnet-aaaa1111", "subnet-bbbb2222"]
+    security_group_id = "sg-12345678"
+  }
+
+  override_resource {
+    target = aws_db_instance.this
+    values = {
+      identifier = "test-postgres"
+      address    = "test-postgres.abcdefg.us-east-1.rds.amazonaws.com"
+      port       = 5432
+      db_name    = "ddalkkak"
+      master_user_secret = [{
+        secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-test-AbCdEf"
+      }]
+    }
+  }
+
+  assert {
+    condition     = aws_db_instance.this.publicly_accessible == false
+    error_message = "RDS 는 외부에 공개되면 안 됩니다."
+  }
+
+  assert {
+    condition     = aws_db_instance.this.storage_encrypted == true && aws_db_instance.this.manage_master_user_password == true
+    error_message = "RDS 는 암호화와 관리형 비밀번호를 써야 합니다."
+  }
+
+  assert {
+    condition     = aws_db_instance.this.password == null
+    error_message = "DB 비밀번호가 코드나 변수로 들어가면 안 됩니다."
+  }
+
+  assert {
+    condition     = aws_db_instance.this.deletion_protection == true && aws_db_instance.this.skip_final_snapshot == false
+    error_message = "삭제 보호와 최종 스냅샷이 켜져 있어야 합니다."
+  }
+
+  assert {
+    condition     = aws_db_instance.this.engine == "postgres" && aws_db_instance.this.instance_class == "db.t3.medium"
+    error_message = "PRD 기준 PostgreSQL db.t3.medium 이어야 합니다."
+  }
+}
+
+# --- ecs ---
+
+run "ecs" {
+  command = apply
+
+  module {
+    source = "../../modules/ecs"
+  }
+
+  variables {
+    name_prefix            = "test"
+    aws_region             = "us-east-1"
+    vpc_id                 = "vpc-12345678"
+    public_subnet_ids      = ["subnet-aaaa1111", "subnet-bbbb2222"]
+    private_app_subnet_ids = ["subnet-cccc3333", "subnet-dddd4444"]
+    alb_security_group_id  = "sg-11111111"
+    app_security_group_id  = "sg-22222222"
+    repository_urls = {
+      frontend = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test/frontend"
+      backend  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test/backend"
+    }
+    db_address    = "test-postgres.abcdefg.us-east-1.rds.amazonaws.com"
+    db_port       = 5432
+    db_name       = "ddalkkak"
+    db_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-test-AbCdEf"
+  }
+
+  # ALB 라우팅: /api/* -> backend, 그 외(기본) -> frontend
+  assert {
+    condition     = anytrue([for c in aws_lb_listener_rule.api.condition : anytrue([for p in c.path_pattern : contains(p.values, "/api/*")])])
+    error_message = "/api/* 경로 규칙이 없습니다."
+  }
+
+  assert {
+    condition     = aws_lb_listener.http.port == 80 && aws_lb_listener.http.default_action[0].type == "forward"
+    error_message = "ALB 80 포트 리스너가 frontend 로 전달해야 합니다."
+  }
+
+  # 이미지는 ECR 리포지토리에서 가져온다
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "dkr.ecr.us-east-1.amazonaws.com/test/backend:")
+    error_message = "backend 이미지가 ECR 에서 와야 합니다."
+  }
+
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["frontend"].container_definitions, "dkr.ecr.us-east-1.amazonaws.com/test/frontend:")
+    error_message = "frontend 이미지가 ECR 에서 와야 합니다."
+  }
+
+  # 비밀 값: DB 계정은 평문 환경 변수가 아니라 Secrets Manager 로 주입한다
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"name\":\"DB_PASSWORD\",\"valueFrom\"")
+    error_message = "DB_PASSWORD 는 Secrets Manager 에서 주입해야 합니다."
+  }
+
+  assert {
+    condition     = !strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"name\":\"DB_PASSWORD\",\"value\"")
+    error_message = "DB_PASSWORD 가 평문 환경 변수로 들어가면 안 됩니다."
+  }
+
+  # Fargate, 퍼블릭 IP 없음, 배포 실패 시 롤백
+  assert {
+    condition     = alltrue([for s in aws_ecs_service.this : s.launch_type == "FARGATE" && s.network_configuration[0].assign_public_ip == false])
+    error_message = "ECS 서비스는 퍼블릭 IP 없는 Fargate 여야 합니다."
+  }
+
+  assert {
+    condition     = alltrue([for s in aws_ecs_service.this : s.deployment_circuit_breaker[0].rollback])
+    error_message = "배포 실패 시 롤백(circuit breaker)이 켜져 있어야 합니다."
+  }
+
+  # 로그: 서비스마다 CloudWatch 로그 그룹, awslogs 드라이버
+  assert {
+    condition     = length(aws_cloudwatch_log_group.this) == 2
+    error_message = "서비스마다 CloudWatch 로그 그룹이 있어야 합니다."
+  }
+
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"logDriver\":\"awslogs\"")
+    error_message = "컨테이너 로그가 CloudWatch Logs 로 가야 합니다."
+  }
+}
+
+# --- observability ---
+
+run "observability" {
+  command = apply
+
+  module {
+    source = "../../modules/observability"
+  }
+
+  variables {
+    name_prefix    = "test"
+    alb_arn_suffix = "app/mock-alb/0123456789abcdef"
+    target_group_arn_suffixes = {
+      frontend = "targetgroup/fe/0123456789abcdef"
+      backend  = "targetgroup/be/0123456789abcdef"
+    }
+    cluster_name = "test-cluster"
+    service_names = {
+      frontend = "test-frontend"
+      backend  = "test-backend"
+    }
+    db_identifier = "test-postgres"
+  }
+
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.alb_5xx_rate.threshold == 5
+    error_message = "ALB 5xx 비율 알람 임계치는 5% 여야 합니다."
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.ecs) == 4 && alltrue([for a in aws_cloudwatch_metric_alarm.ecs : a.threshold == 80])
+    error_message = "ECS 서비스 2개 x (CPU, 메모리) = 알람 4개가 80% 임계치로 있어야 합니다."
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.unhealthy_hosts) == 2
+    error_message = "타겟 그룹마다 헬스체크 실패 알람이 있어야 합니다."
+  }
+
+  # 이메일이 없으면 구독을 만들지 않는다
+  assert {
+    condition     = length(aws_sns_topic_subscription.email) == 0
+    error_message = "alarm_email 이 비어 있으면 SNS 구독을 만들지 않아야 합니다."
+  }
+}

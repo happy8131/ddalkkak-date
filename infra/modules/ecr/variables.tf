@@ -8,3 +8,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "keep_image_count" {
+  description = "리포지토리마다 보관할 최근 이미지 수"
+  type        = number
+  default     = 30
+}
