@@ -140,6 +140,76 @@ run "network_high_availability" {
   }
 }
 
+# --- ecr ---
+
+run "ecr" {
+  command = apply
+
+  module {
+    source = "../../modules/ecr"
+  }
+
+  variables {
+    name_prefix = "test"
+  }
+
+  assert {
+    condition     = toset(keys(aws_ecr_repository.this)) == toset(["frontend", "backend"]) && aws_ecr_repository.this["frontend"].name == "test/frontend" && aws_ecr_repository.this["backend"].name == "test/backend"
+    error_message = "frontend, backend 리포지토리가 <접두사>/<이름> 으로 있어야 합니다."
+  }
+
+  assert {
+    condition     = alltrue([for r in aws_ecr_repository.this : r.image_scanning_configuration[0].scan_on_push])
+    error_message = "push 시 이미지 스캔이 켜져 있어야 합니다."
+  }
+
+  # git SHA 태그 전략: 태그는 변경 불가
+  assert {
+    condition     = alltrue([for r in aws_ecr_repository.this : r.image_tag_mutability == "IMMUTABLE"])
+    error_message = "기본값은 태그 변경 불가(IMMUTABLE)여야 합니다."
+  }
+
+  assert {
+    condition     = alltrue([for r in aws_ecr_repository.this : r.encryption_configuration[0].encryption_type == "AES256"])
+    error_message = "리포지토리는 암호화되어야 합니다."
+  }
+
+  # 수명 주기: 태그 없는 이미지 정리 -> 최근 30개 보관 (any 규칙의 우선순위가 가장 낮아야 한다)
+  assert {
+    condition     = jsondecode(aws_ecr_lifecycle_policy.this["backend"].policy).rules[0].selection.tagStatus == "untagged" && jsondecode(aws_ecr_lifecycle_policy.this["backend"].policy).rules[0].selection.countNumber == 7
+    error_message = "태그 없는 이미지는 7일 뒤 삭제해야 합니다."
+  }
+
+  assert {
+    condition     = jsondecode(aws_ecr_lifecycle_policy.this["backend"].policy).rules[1].selection.tagStatus == "any" && jsondecode(aws_ecr_lifecycle_policy.this["backend"].policy).rules[1].selection.countNumber == 30 && jsondecode(aws_ecr_lifecycle_policy.this["backend"].policy).rules[1].rulePriority > jsondecode(aws_ecr_lifecycle_policy.this["backend"].policy).rules[0].rulePriority
+    error_message = "최근 30개만 보관하는 규칙이 마지막 우선순위로 있어야 합니다."
+  }
+
+  assert {
+    condition     = output.frontend_repository_url != "" && output.backend_repository_url != "" && length(output.repository_urls) == 2
+    error_message = "repository_url 이 출력되어야 합니다."
+  }
+}
+
+# 필요하면 태그 변경을 허용할 수 있다
+run "ecr_mutable" {
+  command = apply
+
+  module {
+    source = "../../modules/ecr"
+  }
+
+  variables {
+    name_prefix          = "test"
+    image_tag_mutability = "MUTABLE"
+  }
+
+  assert {
+    condition     = alltrue([for r in aws_ecr_repository.this : r.image_tag_mutability == "MUTABLE"])
+    error_message = "image_tag_mutability 로 MUTABLE 을 선택할 수 있어야 합니다."
+  }
+}
+
 # --- rds ---
 
 run "rds" {

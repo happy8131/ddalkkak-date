@@ -39,13 +39,13 @@ variable "db_multi_az" {
 }
 
 variable "frontend_image_tag" {
-  description = "처음 배포할 frontend 이미지 태그. 이후 배포는 CI/CD 가 태스크 정의를 갱신한다"
+  description = "frontend 초기 이미지 태그. 생성 시점의 자리표시 값이며, 실제 배포는 CI/CD 가 git SHA 태그로 태스크 정의를 갱신한다"
   type        = string
-  default     = "latest"
+  default     = "bootstrap"
 }
 
 variable "backend_image_tag" {
-  description = "처음 배포할 backend 이미지 태그. 이후 배포는 CI/CD 가 태스크 정의를 갱신한다"
+  description = "backend 초기 이미지 태그. 생성 시점의 자리표시 값이며, 실제 배포는 CI/CD 가 git SHA 태그로 태스크 정의를 갱신한다"
   type        = string
-  default     = "latest"
+  default     = "bootstrap"
 }
