@@ -6,6 +6,7 @@ AI가 추천하는 데이트 코스 서비스입니다. 프론트엔드(Next.js)
 | --- | --- |
 | `frontend/` | Next.js (App Router) + TypeScript + Tailwind |
 | `backend/` | Spring Boot (Java 17, Gradle) + PostgreSQL |
+| `infra/` | Terraform (prod 단일 환경, 리전 us-east-1). 사용법은 [infra/README.md](./infra/README.md) |
 | `docker-compose.yml` | 로컬 개발 환경 (frontend + backend + postgres) |
 
 ## 로컬 실행 (Docker Compose)

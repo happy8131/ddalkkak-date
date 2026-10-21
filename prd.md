@@ -936,7 +936,6 @@ Infrastructure:
 - 후기: 네이버 블로그 검색 API + 카카오(다음) 블로그 검색 API (공식 API만 사용, 크롤링 없음)
 - IaC: Terraform
   - 모든 AWS 리소스를 Terraform으로 관리 (콘솔 수동 변경 금지)
-  - Remote State: S3 백엔드 + 상태 잠금 (DynamoDB)
   - 구조: modules/ (network, ecr, ecs, rds, observability) + envs/prod (prod 단일 환경, dev 환경 없음)
   - terraform apply는 CI에서 자동화하지 않고 담당자가 로컬에서 직접 실행
 - CI/CD: GitHub Actions
