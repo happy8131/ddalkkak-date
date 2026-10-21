@@ -285,6 +285,10 @@ run "ecs" {
       frontend = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test/frontend"
       backend  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test/backend"
     }
+    repository_arns = {
+      frontend = "arn:aws:ecr:us-east-1:123456789012:repository/test/frontend"
+      backend  = "arn:aws:ecr:us-east-1:123456789012:repository/test/backend"
+    }
     db_address    = "test-postgres.abcdefg.us-east-1.rds.amazonaws.com"
     db_port       = 5432
     db_name       = "ddalkkak"
@@ -344,6 +348,69 @@ run "ecs" {
   assert {
     condition     = strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"logDriver\":\"awslogs\"")
     error_message = "컨테이너 로그가 CloudWatch Logs 로 가야 합니다."
+  }
+
+  # Container Insights, 포트, 컨테이너 헬스체크
+  assert {
+    condition     = anytrue([for s in aws_ecs_cluster.this.setting : s.name == "containerInsights" && s.value == "enabled"])
+    error_message = "Container Insights 가 켜져 있어야 합니다."
+  }
+
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"containerPort\":8080") && strcontains(aws_ecs_task_definition.this["frontend"].container_definitions, "\"containerPort\":3000")
+    error_message = "컨테이너 포트가 backend 8080, frontend 3000 이어야 합니다."
+  }
+
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "actuator/health") && strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"healthCheck\"")
+    error_message = "backend 컨테이너 헬스체크가 /actuator/health 를 확인해야 합니다."
+  }
+
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["frontend"].container_definitions, "\"healthCheck\"") && !strcontains(aws_ecs_task_definition.this["frontend"].container_definitions, "curl")
+    error_message = "frontend 컨테이너 헬스체크가 있어야 하고, curl 이 없는 이미지라 curl 을 쓰면 안 됩니다."
+  }
+
+  # ALB 타겟 그룹 헬스체크 경로
+  assert {
+    condition     = aws_lb_target_group.this["backend"].health_check[0].path == "/actuator/health" && aws_lb_target_group.this["frontend"].health_check[0].path == "/"
+    error_message = "타겟 그룹 헬스체크 경로가 올바르지 않습니다."
+  }
+
+  # 실행 역할 최소 권한: 와일드카드 액션 없음, 관리형 광범위 정책 미사용, ECR pull 은 지정한 리포지토리로 한정
+  assert {
+    condition = alltrue([
+      for st in jsondecode(aws_iam_role_policy.task_execution.policy).Statement :
+      !anytrue([for a in flatten([st.Action]) : a == "*" || endswith(a, ":*")])
+    ])
+    error_message = "태스크 실행 역할에 와일드카드 액션이 있으면 안 됩니다."
+  }
+
+  assert {
+    condition = anytrue([
+      for st in jsondecode(aws_iam_role_policy.task_execution.policy).Statement :
+      st.Sid == "EcrPull" && length(st.Resource) == 2 && alltrue([for r in st.Resource : startswith(r, "arn:aws:ecr:")])
+    ])
+    error_message = "ECR pull 권한은 frontend, backend 리포지토리로 한정되어야 합니다."
+  }
+
+  assert {
+    condition = anytrue([
+      for st in jsondecode(aws_iam_role_policy.task_execution.policy).Statement :
+      st.Sid == "ReadDbSecret" && st.Resource == "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-test-AbCdEf"
+    ])
+    error_message = "Secrets 읽기 권한은 DB Secret 하나로 한정되어야 합니다."
+  }
+
+  # Auto Scaling: 서비스마다 CPU 목표 추적, 최소 1 / 최대 2
+  assert {
+    condition     = alltrue([for t in aws_appautoscaling_target.this : t.min_capacity == 1 && t.max_capacity == 2])
+    error_message = "Auto Scaling 은 서비스마다 최소 1, 최대 2 여야 합니다."
+  }
+
+  assert {
+    condition     = alltrue([for p in aws_appautoscaling_policy.cpu : p.target_tracking_scaling_policy_configuration[0].target_value == 70 && p.target_tracking_scaling_policy_configuration[0].predefined_metric_specification[0].predefined_metric_type == "ECSServiceAverageCPUUtilization"])
+    error_message = "CPU 70% 목표 추적 정책이어야 합니다."
   }
 }
 

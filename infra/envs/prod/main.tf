@@ -55,6 +55,7 @@ module "ecs" {
   app_security_group_id  = module.network.app_security_group_id
 
   repository_urls    = module.ecr.repository_urls
+  repository_arns    = module.ecr.repository_arns
   frontend_image_tag = var.frontend_image_tag
   backend_image_tag  = var.backend_image_tag
 
