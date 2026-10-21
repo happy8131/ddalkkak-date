@@ -37,3 +37,21 @@ variable "backend_port" {
   type        = number
   default     = 8080
 }
+
+variable "nat_per_az" {
+  description = "true 면 AZ 마다 NAT 게이트웨이를 둔다(고가용성, 비용 증가). false 면 하나만 둔다"
+  type        = bool
+  default     = false
+}
+
+variable "alb_https_enabled" {
+  description = "ALB 보안 그룹에서 443 을 공개할지 여부. HTTPS 리스너(ACM)를 붙일 때 켠다"
+  type        = bool
+  default     = false
+}
+
+variable "enable_interface_endpoints" {
+  description = "ECR, CloudWatch Logs, Secrets Manager 인터페이스 VPC 엔드포인트를 만들지 여부(시간당 요금 발생)"
+  type        = bool
+  default     = false
+}
