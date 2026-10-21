@@ -42,3 +42,8 @@ output "alarm_topic_arn" {
   description = "알람 SNS 토픽 ARN"
   value       = module.observability.alarm_topic_arn
 }
+
+output "api_key_parameter_names" {
+  description = "외부 API 키를 주입할 SSM 파라미터 이름 (키: 파라미터 키). 값은 별도로 넣는다"
+  value       = module.secrets.parameter_names
+}

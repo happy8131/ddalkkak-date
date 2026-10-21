@@ -15,6 +15,7 @@ infra/
     ├── ecr/          # frontend / backend 이미지 저장소
     ├── ecs/          # ECS Fargate, ALB
     ├── rds/          # RDS PostgreSQL
+    ├── secrets/      # 외부 API 키 자리 (SSM SecureString)
     └── observability/# CloudWatch 알람, SNS
 ```
 
@@ -27,6 +28,7 @@ infra/
 | `network` | VPC, public / private-app / private-db 서브넷, IGW, NAT 게이트웨이, S3 VPC 엔드포인트, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
 | `ecr` | `frontend`, `backend` 리포지토리 (푸시 시 이미지 스캔, 태그 변경 불가, 태그 없는 이미지 7일 뒤·나머지는 최근 30개만 보관) |
 | `rds` | PostgreSQL 15 `db.t3.medium` (비공개, 암호화, 삭제 보호, 백업 7일, 단일 AZ) |
+| `secrets` | 외부 API 키 자리 SSM 파라미터 5개(카카오, LLM, Anthropic, 네이버 ID/Secret). 값은 placeholder이고 별도로 주입 |
 | `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스(CPU 기반 Auto Scaling), ALB, CloudWatch 로그 그룹, 태스크 실행·태스크 역할 |
 | `observability` | SNS 알람 토픽, ALB 5xx 비율 / 비정상 대상 / ECS CPU·메모리 / RDS CPU·연결 수 알람 |
 
@@ -37,6 +39,19 @@ infra/
 - **헬스체크:** ALB 타겟 그룹(frontend `/`, backend `/actuator/health`)과 컨테이너 헬스체크(task definition)를 둘 다 둡니다. frontend 이미지(`node:slim`)에는 `curl`이 없어서 Node 내장 `fetch`로 확인하고, backend는 `curl`로 확인합니다. backend는 Spring Boot와 Flyway 기동 시간을 위해 시작 유예 시간(120초)을 둡니다.
 - **Auto Scaling:** 서비스마다 평균 CPU 70%를 목표로 하는 목표 추적 정책이며, 초기 범위는 최소 1 / 최대 2개입니다(`*_min_capacity`, `*_max_capacity`로 조정).
 - **IAM 최소 권한:** 태스크 실행 역할은 관리형 `AmazonECSTaskExecutionRolePolicy`(로그·ECR이 모든 리소스에 열려 있음) 대신, 이 스택의 ECR 리포지토리 pull, 로그 그룹 쓰기, DB Secret 읽기만 허용하는 정책을 직접 둡니다. 태스크 역할은 애플리케이션이 AWS API를 쓰지 않아 권한이 없습니다.
+
+### DB와 시크릿
+
+- **인스턴스 크기:** PRD 기준 `db.t3.medium`입니다. 바꾸려면 `db_instance_class`를 지정합니다.
+- **Multi-AZ:** 기본은 단일 AZ(`db_multi_az = false`)입니다. Multi-AZ는 장애 시 자동 전환되지만 RDS 비용이 대략 두 배가 됩니다. 실사용자가 생기기 전에 `db_multi_az = true`로 켜는 것을 권장하며, 켜면 짧은 중단이 있을 수 있어 plan을 먼저 확인합니다.
+- **보호:** 삭제 보호와 최종 스냅샷이 켜져 있습니다. 인스턴스를 정말 지우려면 `deletion_protection`을 먼저 끄는 apply가 필요합니다.
+- **DB 계정:** RDS가 Secrets Manager에 마스터 계정을 만들고 관리합니다. ECS가 컨테이너 시작 시 `DB_USERNAME`, `DB_PASSWORD`로 주입하며 코드와 tfvars에는 평문이 없습니다. `DB_URL`은 호스트 주소뿐이라 비밀이 아니므로 일반 환경 변수로 넣습니다.
+- **외부 API 키:** `secrets` 모듈이 `/ddalkkak-date-prod/<키>` 이름의 SecureString 파라미터를 placeholder(`REPLACE_ME`)로 만들어 둡니다. 실제 값은 apply 후 콘솔(Systems Manager → Parameter Store)에서 넣는 것을 권장합니다. CLI를 쓰면 값이 셸 기록에 남으니 주의하세요.
+  ```bash
+  aws ssm put-parameter --name /ddalkkak-date-prod/kakao-rest-api-key --type SecureString --overwrite --value "<값>"
+  ```
+  이후 apply가 주입한 값을 placeholder로 되돌리지 않습니다(`ignore_changes`). 이 키들은 아직 어떤 ECS 태스크에도 주입하지 않습니다. 사용하는 태스크(예: 장소 수집 배치)를 만들 때 `secrets`에 `parameter_arns`를 연결하고 실행 역할에 `ssm:GetParameters` 권한을 추가합니다.
+- **네이버 키:** 장소 수집에서는 네이버 지역 검색을 쓰지 않지만, PRD의 블로그 후기 검색용으로 자리만 만들어 두었습니다.
 
 ### 알아 둘 점
 

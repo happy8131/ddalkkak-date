@@ -39,6 +39,7 @@ module "rds" {
   subnet_ids        = module.network.private_db_subnet_ids
   security_group_id = module.network.rds_security_group_id
   multi_az          = var.db_multi_az
+  instance_class    = var.db_instance_class
 }
 
 module "ecs" {
@@ -77,4 +78,12 @@ module "observability" {
   cluster_name              = module.ecs.cluster_name
   service_names             = module.ecs.service_names
   db_identifier             = module.rds.identifier
+}
+
+# 외부 API 키 자리 (값은 콘솔/CLI 로 별도 주입)
+module "secrets" {
+  source = "../../modules/secrets"
+
+  name_prefix = local.name_prefix
+  tags        = local.common_tags
 }

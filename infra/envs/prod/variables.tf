@@ -49,3 +49,9 @@ variable "backend_image_tag" {
   type        = string
   default     = "bootstrap"
 }
+
+variable "db_instance_class" {
+  description = "RDS 인스턴스 클래스 (PRD: db.t3.medium)"
+  type        = string
+  default     = "db.t3.medium"
+}
