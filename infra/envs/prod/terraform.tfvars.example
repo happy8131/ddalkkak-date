@@ -1,0 +1,3 @@
+# 복사해서 terraform.tfvars 로 만들어 사용한다 (terraform.tfvars 는 커밋하지 않는다)
+# 비밀 값(DB 비밀번호, API 키 등)은 여기에 넣지 않는다. Secrets Manager / SSM 을 쓴다
+owner = "your-name"
