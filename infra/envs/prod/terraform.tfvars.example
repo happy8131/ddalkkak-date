@@ -1,3 +1,9 @@
 # 복사해서 terraform.tfvars 로 만들어 사용한다 (terraform.tfvars 는 커밋하지 않는다)
-# 비밀 값(DB 비밀번호, API 키 등)은 여기에 넣지 않는다. Secrets Manager / SSM 을 쓴다
+# 비밀 값(DB 비밀번호, API 키 등)은 여기에 넣지 않는다. DB 비밀번호는 RDS가 Secrets Manager 에서 관리한다
 owner = "your-name"
+
+# 알람 메일을 받을 주소 (비우면 SNS 구독을 만들지 않는다)
+# alarm_email = "ops@example.com"
+
+# RDS 다중 AZ (안정화 후 true)
+# db_multi_az = false

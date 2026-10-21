@@ -25,3 +25,27 @@ variable "owner" {
   description = "리소스 담당자 (owner 태그). terraform.tfvars 에서 지정한다"
   type        = string
 }
+
+variable "alarm_email" {
+  description = "CloudWatch 알람을 받을 이메일. 비우면 SNS 구독을 만들지 않는다"
+  type        = string
+  default     = ""
+}
+
+variable "db_multi_az" {
+  description = "RDS 다중 AZ 여부. 초기에는 비용 때문에 끄고 안정화 후 켠다"
+  type        = bool
+  default     = false
+}
+
+variable "frontend_image_tag" {
+  description = "처음 배포할 frontend 이미지 태그. 이후 배포는 CI/CD 가 태스크 정의를 갱신한다"
+  type        = string
+  default     = "latest"
+}
+
+variable "backend_image_tag" {
+  description = "처음 배포할 backend 이미지 태그. 이후 배포는 CI/CD 가 태스크 정의를 갱신한다"
+  type        = string
+  default     = "latest"
+}

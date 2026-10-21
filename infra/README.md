@@ -18,7 +18,52 @@ infra/
     └── observability/# CloudWatch 알람, SNS
 ```
 
-모듈은 현재 뼈대(버전 고정, 공통 변수)만 있고, 실제 리소스는 후속 티켓에서 추가합니다.
+## 만들어지는 리소스
+
+`envs/prod`가 아래 모듈을 연결합니다. 리전은 `us-east-1`, 가용 영역은 2개를 씁니다.
+
+| 모듈 | 리소스 |
+| --- | --- |
+| `network` | VPC, public / private-app / private-db 서브넷, NAT 게이트웨이 1개, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
+| `ecr` | `frontend`, `backend` 리포지토리 (푸시 시 이미지 스캔, 최근 30개만 보관) |
+| `rds` | PostgreSQL 15 `db.t3.medium` (비공개, 암호화, 삭제 보호, 백업 7일, 단일 AZ) |
+| `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스, ALB, CloudWatch 로그 그룹 |
+| `observability` | SNS 알람 토픽, ALB 5xx 비율 / 비정상 대상 / ECS CPU·메모리 / RDS CPU·연결 수 알람 |
+
+- **라우팅:** ALB 80번 포트에서 `/api/*`는 backend(8080), 그 외는 frontend(3000)로 보냅니다. 백엔드 헬스체크(`/actuator/health`)는 ALB가 타겟에 직접 호출하며 외부에는 노출되지 않습니다.
+- **비밀 값:** RDS가 마스터 비밀번호를 Secrets Manager에 직접 만들고 관리합니다(`manage_master_user_password`). 비밀번호는 코드, tfvars, Terraform 변수, state에 나타나지 않고, ECS가 컨테이너 시작 시점에 `DB_USERNAME`, `DB_PASSWORD`로 주입합니다.
+- **알람:** `alarm_email`을 지정하면 SNS 이메일 구독이 만들어지고, 받은 메일의 확인 링크를 눌러야 활성화됩니다. 비워 두면 토픽만 만들어집니다.
+- **배포:** 서비스는 `task_definition` 변경을 무시합니다(`ignore_changes`). 이후 이미지 배포는 CI/CD가 태스크 정의를 갱신하는 방식이라 Terraform이 되돌리지 않습니다.
+
+### 알아 둘 점
+
+- **비용:** NAT 게이트웨이, ALB, RDS `db.t3.medium`이 상시 비용입니다. NAT는 비용 때문에 1개만 두어서 해당 AZ에 장애가 나면 private 서브넷의 아웃바운드(이미지 pull 등)가 끊깁니다.
+- **HTTP만 지원합니다.** 도메인과 HTTPS(ACM), CloudFront는 초기 배포가 안정된 뒤 별도 작업으로 추가합니다. CORS 허용 출처는 ALB 주소(`http://<ALB DNS>`)입니다.
+- **프론트엔드 API 주소:** 프론트엔드 이미지는 빌드 시점에 `NEXT_PUBLIC_API_BASE_URL`이 고정됩니다. ALB 주소가 정해진 뒤 그 값으로 이미지를 빌드해야 브라우저가 backend를 호출할 수 있습니다.
+- **Redis, 장소 수집 배치(ECS Scheduled Task):** 이번 범위에 포함하지 않았습니다.
+
+## 첫 배포 순서
+
+1. 아래 "init / plan / apply"대로 `apply`해서 인프라를 만듭니다. 이 시점에는 ECR이 비어 있어서 ECS 태스크는 이미지를 받지 못해 기동에 실패합니다(정상입니다).
+2. `terraform output alb_dns_name`으로 주소를 확인하고, 그 주소를 `NEXT_PUBLIC_API_BASE_URL`로 넣어 프론트엔드 이미지를 빌드합니다.
+3. `terraform output ecr_repository_urls`의 주소로 이미지를 `latest` 태그로 push합니다(`aws ecr get-login-password` 후 `docker push`).
+4. ECS 서비스를 새로 배포하면 태스크가 기동합니다.
+   ```bash
+   aws ecs update-service --cluster <ecs_cluster_name> --service <서비스 이름> --force-new-deployment
+   ```
+5. `http://<ALB DNS>/`(프론트엔드)와 `http://<ALB DNS>/api/v1/...`(백엔드)로 확인하고, CloudWatch Logs `/ecs/ddalkkak-date-prod/*`에서 로그를 봅니다.
+
+## 테스트 (AWS 호출 없음)
+
+AWS 자격 증명 없이도 구성을 검증할 수 있습니다. mock provider로 `apply`를 흉내 내며 실제 계정에는 아무것도 만들지 않습니다.
+
+```bash
+cd infra/envs/prod
+terraform init
+terraform test
+```
+
+`tests/modules.tftest.hcl`은 모듈 내부 설정(경로 라우팅, 비밀 값 주입 방식, RDS 비공개·암호화, 알람 임계치 등)을, `tests/plan.tftest.hcl`은 모듈 연결과 태그를 확인합니다. 이 테스트가 통과해도 **실제 AWS에서의 동작은 검증된 것이 아닙니다.** 실제 `plan` 결과는 아래 절차대로 직접 확인합니다.
 
 ## 상태(state) 관리
 
