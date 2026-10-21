@@ -67,3 +67,15 @@ variable "enable_nat_gateway" {
   type        = bool
   default     = true
 }
+
+variable "github_repository" {
+  description = "배포를 허용할 GitHub 저장소 (owner/repo 형식)"
+  type        = string
+  default     = "happy8131/ddalkkak-date"
+}
+
+variable "create_github_oidc_provider" {
+  description = "GitHub OIDC 공급자를 새로 만들지 여부. 계정에 이미 있으면 false"
+  type        = bool
+  default     = true
+}

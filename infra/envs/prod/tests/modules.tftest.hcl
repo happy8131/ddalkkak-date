@@ -27,6 +27,10 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:iam::123456789012:role/mock-role" }
   }
 
+  mock_resource "aws_iam_openid_connect_provider" {
+    defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
+  }
+
   mock_resource "aws_lb" {
     defaults = {
       arn        = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/mock-alb/0123456789abcdef"
@@ -639,5 +643,80 @@ run "observability" {
   assert {
     condition     = length(aws_sns_topic_subscription.email) == 0
     error_message = "alarm_email 이 비어 있으면 SNS 구독을 만들지 않아야 합니다."
+  }
+}
+
+# --- cicd ---
+
+run "cicd" {
+  command = apply
+
+  module {
+    source = "../../modules/cicd"
+  }
+
+  variables {
+    name_prefix       = "test"
+    github_repository = "octo-org/octo-repo"
+    ecr_repository_arns = {
+      frontend = "arn:aws:ecr:us-east-1:123456789012:repository/test/frontend"
+      backend  = "arn:aws:ecr:us-east-1:123456789012:repository/test/backend"
+    }
+    ecs_service_arns = {
+      frontend = "arn:aws:ecs:us-east-1:123456789012:service/test-cluster/test-frontend"
+      backend  = "arn:aws:ecs:us-east-1:123456789012:service/test-cluster/test-backend"
+    }
+    pass_role_arns = [
+      "arn:aws:iam::123456789012:role/test-ecs-task-execution",
+      "arn:aws:iam::123456789012:role/test-ecs-task",
+    ]
+  }
+
+  # OIDC: 지정한 저장소의 prod 환경에서 실행된 워크플로만 역할을 맡을 수 있다 (와일드카드 없음)
+  assert {
+    condition     = jsondecode(aws_iam_role.deploy.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:octo-org/octo-repo:environment:prod"
+    error_message = "신뢰 정책은 저장소와 prod 환경으로 제한되어야 합니다."
+  }
+
+  assert {
+    condition     = jsondecode(aws_iam_role.deploy.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com"
+    error_message = "신뢰 정책은 audience 를 sts.amazonaws.com 으로 제한해야 합니다."
+  }
+
+  assert {
+    condition     = jsondecode(aws_iam_role.deploy.assume_role_policy).Statement[0].Action == "sts:AssumeRoleWithWebIdentity"
+    error_message = "OIDC 웹 아이덴티티로만 역할을 맡아야 합니다."
+  }
+
+  # 권한은 ECR push 와 ECS 서비스 갱신으로 한정하고 Terraform 인프라 변경 권한은 없다
+  assert {
+    condition = alltrue([
+      for st in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
+      !anytrue([for a in flatten([st.Action]) : a == "*" || endswith(a, ":*")])
+    ])
+    error_message = "배포 역할에 와일드카드 권한(예: ecs:*)이 있으면 안 됩니다."
+  }
+
+  assert {
+    condition = alltrue([
+      for st in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
+      !anytrue([for a in flatten([st.Action]) : startswith(a, "ec2:") || startswith(a, "rds:") || startswith(a, "iam:Create") || startswith(a, "iam:Attach")])
+    ])
+    error_message = "배포 역할에 인프라 변경 권한이 있으면 안 됩니다."
+  }
+
+  # iam:PassRole 은 지정한 두 역할과 ecs-tasks 에만 허용한다
+  assert {
+    condition = anytrue([
+      for st in jsondecode(aws_iam_role_policy.deploy.policy).Statement :
+      st.Sid == "PassTaskRoles" && length(st.Resource) == 2 && st.Condition.StringEquals["iam:PassedToService"] == "ecs-tasks.amazonaws.com"
+    ])
+    error_message = "PassRole 은 태스크 역할 2개와 ecs-tasks 로 제한되어야 합니다."
+  }
+
+  # 기본값은 OIDC 공급자를 새로 만든다
+  assert {
+    condition     = length(aws_iam_openid_connect_provider.github) == 1
+    error_message = "기본값은 OIDC 공급자를 만들어야 합니다."
   }
 }

@@ -47,3 +47,8 @@ output "api_key_parameter_names" {
   description = "외부 API 키를 주입할 SSM 파라미터 이름 (키: 파라미터 키). 값은 별도로 넣는다"
   value       = module.secrets.parameter_names
 }
+
+output "github_deploy_role_arn" {
+  description = "GitHub Actions 배포 역할 ARN. GitHub Environment(prod)의 AWS_DEPLOY_ROLE_ARN 시크릿에 등록한다"
+  value       = module.cicd.deploy_role_arn
+}

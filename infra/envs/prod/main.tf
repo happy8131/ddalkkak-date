@@ -92,3 +92,17 @@ module "secrets" {
   name_prefix = local.name_prefix
   tags        = local.common_tags
 }
+
+# GitHub Actions 배포용 OIDC 역할 (장기 액세스 키 없음)
+module "cicd" {
+  source = "../../modules/cicd"
+
+  name_prefix          = local.name_prefix
+  tags                 = local.common_tags
+  github_repository    = var.github_repository
+  create_oidc_provider = var.create_github_oidc_provider
+
+  ecr_repository_arns = module.ecr.repository_arns
+  ecs_service_arns    = module.ecs.service_arns
+  pass_role_arns      = [module.ecs.task_execution_role_arn, module.ecs.task_role_arn]
+}

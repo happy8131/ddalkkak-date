@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 구현 상태
 
-- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39), 코스 생성 API `POST /api/v1/courses/generate` (KAN-13), 장소 수집 배치 + AI 큐레이션 (KAN-16), `infra/` Terraform 뼈대 (KAN-40)와 AWS 리소스 코드 (KAN-41, VPC·ECR·RDS·ECS·ALB·알람)
-- 아직 없는 것: CI/CD(`.github/workflows/`), HTTPS/CloudFront, 실제 AWS 계정에 대한 apply 검증
+- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39), 코스 생성 API `POST /api/v1/courses/generate` (KAN-13), 장소 수집 배치 + AI 큐레이션 (KAN-16), `infra/` Terraform 뼈대 (KAN-40)와 AWS 리소스 코드 (KAN-41, VPC·ECR·RDS·ECS·ALB·알람), GitHub Actions CI/CD (KAN-42, `.github/workflows/`)
+- 아직 없는 것: HTTPS/CloudFront, 실제 AWS 계정에 대한 apply와 워크플로 실행 검증
 - 루트(`ddalkkak-date/`) 하나의 git 저장소로 `frontend/`, `backend/`, `infra/`를 함께 관리합니다. 기본 브랜치는 `main`입니다.
 - 아래 "목표 아키텍처"는 `prd.md` 기준 계획이므로, 코드를 작성하기 전에 해당 디렉터리가 실제로 존재하는지 확인하세요.
 

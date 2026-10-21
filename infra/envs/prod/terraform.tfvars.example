@@ -17,3 +17,6 @@ owner = "your-name"
 # NAT 게이트웨이 사용 여부 (기본 true). false 면 NAT(월 약 $35)를 없애고 ECS 태스크를 공인 IP 가 붙는 퍼블릭 서브넷에 둔다
 # 테스트/임시 환경에서 비용을 줄일 때만 쓴다. 태스크 인바운드는 ALB 보안 그룹만 허용한다
 # enable_nat_gateway = false
+
+# 계정에 GitHub OIDC 공급자(token.actions.githubusercontent.com)가 이미 있으면 false
+# create_github_oidc_provider = true

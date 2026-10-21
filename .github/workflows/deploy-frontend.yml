@@ -1,0 +1,96 @@
+# main 에 frontend 변경이 머지되면 이미지를 빌드해 ECR 에 push 하고 ECS 서비스를 롤링 배포한다 (prod)
+# 인증: GitHub OIDC -> IAM 역할 (장기 액세스 키 없음)
+# 필요 설정: GitHub Environment "prod"
+#   - 시크릿 AWS_DEPLOY_ROLE_ARN (terraform output github_deploy_role_arn)
+#   - 변수 NEXT_PUBLIC_API_BASE_URL (브라우저가 backend 를 호출할 주소. 빌드 시점에 번들에 고정된다)
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# 같은 서비스의 배포가 겹치지 않게 순서대로 실행한다
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ddalkkak-date-prod/frontend
+  ECS_CLUSTER: ddalkkak-date-prod-cluster
+  ECS_SERVICE: ddalkkak-date-prod-frontend
+  ECS_TASK_FAMILY: ddalkkak-date-prod-frontend
+  CONTAINER_NAME: frontend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 빌드 인자 확인
+        env:
+          API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "::error::GitHub Environment(prod)에 변수 NEXT_PUBLIC_API_BASE_URL 이 없습니다."
+            exit 1
+          fi
+
+      - name: AWS 자격 증명 (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR 로그인
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: "이미지 빌드와 push (태그: git SHA)"
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          API_BASE_URL: ${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build --build-arg NEXT_PUBLIC_API_BASE_URL="$API_BASE_URL" -t "$IMAGE" frontend
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      # Terraform 이 만든 현재 태스크 정의를 내려받아 이미지 필드만 바꾼다
+      - name: 현재 태스크 정의 조회
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_FAMILY" \
+            --query taskDefinition > task-definition.json
+
+      - name: 태스크 정의에 새 이미지 반영
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.image }}
+
+      # 서비스가 안정화될 때까지 기다리고, 실패하면 워크플로도 실패한다.
+      # 실패한 배포는 ECS Deployment Circuit Breaker 가 이전 버전으로 되돌린다
+      - name: ECS 배포 (롤링)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 20
