@@ -24,7 +24,7 @@ infra/
 
 | 모듈 | 리소스 |
 | --- | --- |
-| `network` | VPC, public / private-app / private-db 서브넷, NAT 게이트웨이 1개, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
+| `network` | VPC, public / private-app / private-db 서브넷, IGW, NAT 게이트웨이, S3 VPC 엔드포인트, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
 | `ecr` | `frontend`, `backend` 리포지토리 (푸시 시 이미지 스캔, 최근 30개만 보관) |
 | `rds` | PostgreSQL 15 `db.t3.medium` (비공개, 암호화, 삭제 보호, 백업 7일, 단일 AZ) |
 | `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스, ALB, CloudWatch 로그 그룹 |
@@ -37,7 +37,10 @@ infra/
 
 ### 알아 둘 점
 
-- **비용:** NAT 게이트웨이, ALB, RDS `db.t3.medium`이 상시 비용입니다. NAT는 비용 때문에 1개만 두어서 해당 AZ에 장애가 나면 private 서브넷의 아웃바운드(이미지 pull 등)가 끊깁니다.
+- **비용:** NAT 게이트웨이, ALB, RDS `db.t3.medium`이 상시 비용입니다.
+- **NAT 가용성 / 비용 선택:** 기본은 NAT 1개(`nat_per_az = false`)입니다. 이 경우 NAT가 있는 AZ에 장애가 나면 private 서브넷의 아웃바운드(이미지 pull 등)가 모두 끊깁니다. 가용성이 더 중요해지면 `nat_per_az = true`로 AZ마다 NAT를 두며 NAT 비용이 AZ 수만큼 늘어납니다. 현재 `envs/prod`는 기본값을 쓰고, 바꾸려면 `module "network"`에 `nat_per_az = true`를 넣습니다.
+- **VPC 엔드포인트:** S3 게이트웨이 엔드포인트는 무료라서 항상 켜 둡니다(ECR 이미지 레이어가 S3에서 내려오므로 NAT 트래픽이 줄어듭니다). ECR(api, dkr), CloudWatch Logs, Secrets Manager 인터페이스 엔드포인트는 AZ마다 시간당 요금이 붙어서 기본은 끄고, NAT 데이터 처리 비용이 커질 때 `enable_interface_endpoints = true`로 켭니다.
+- **보안 그룹:** ALB는 80만 공개합니다. HTTPS 리스너(ACM)를 붙일 때 `alb_https_enabled = true`로 443을 엽니다.
 - **HTTP만 지원합니다.** 도메인과 HTTPS(ACM), CloudFront는 초기 배포가 안정된 뒤 별도 작업으로 추가합니다. CORS 허용 출처는 ALB 주소(`http://<ALB DNS>`)입니다.
 - **프론트엔드 API 주소:** 프론트엔드 이미지는 빌드 시점에 `NEXT_PUBLIC_API_BASE_URL`이 고정됩니다. ALB 주소가 정해진 뒤 그 값으로 이미지를 빌드해야 브라우저가 backend를 호출할 수 있습니다.
 - **Redis, 장소 수집 배치(ECS Scheduled Task):** 이번 범위에 포함하지 않았습니다.

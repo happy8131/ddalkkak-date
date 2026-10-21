@@ -38,6 +38,10 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/mock-alb/0123456789abcdef/0123456789abcdef" }
   }
 
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
+  }
+
   mock_data "aws_iam_policy_document" {
     defaults = {
       json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"

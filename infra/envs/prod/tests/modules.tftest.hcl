@@ -8,6 +8,10 @@ mock_provider "aws" {
     }
   }
 
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
+  }
+
   mock_data "aws_iam_policy_document" {
     defaults = {
       json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
@@ -75,6 +79,64 @@ run "network" {
   assert {
     condition     = aws_vpc_security_group_ingress_rule.app_frontend.cidr_ipv4 == null && aws_vpc_security_group_ingress_rule.app_backend.cidr_ipv4 == null
     error_message = "ECS 태스크 보안 그룹이 인터넷에 열려 있습니다."
+  }
+
+  # 기본값: NAT 1개, HTTP 만 공개, S3 게이트웨이 엔드포인트만 (인터페이스 엔드포인트는 비용 때문에 끔)
+  assert {
+    condition     = length(aws_nat_gateway.this) == 1 && length(aws_route_table.private_app) == 2
+    error_message = "기본값은 NAT 1개이고 private_app 라우트 테이블은 AZ 마다 하나여야 합니다."
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.alb_https) == 0
+    error_message = "기본값에서는 ALB 443 을 열지 않아야 합니다."
+  }
+
+  assert {
+    condition     = aws_vpc_endpoint.s3.vpc_endpoint_type == "Gateway" && length(aws_vpc_endpoint.interface) == 0
+    error_message = "기본값은 S3 게이트웨이 엔드포인트만 있어야 합니다."
+  }
+
+  # DB 서브넷에는 인터넷 경로가 없다
+  assert {
+    condition     = length(aws_route_table.private_db.route) == 0
+    error_message = "DB 라우트 테이블에 외부 경로가 있으면 안 됩니다."
+  }
+}
+
+# AZ 별 NAT, HTTPS, 인터페이스 엔드포인트를 모두 켠 구성
+run "network_high_availability" {
+  command = apply
+
+  module {
+    source = "../../modules/network"
+  }
+
+  variables {
+    name_prefix                = "test"
+    nat_per_az                 = true
+    alb_https_enabled          = true
+    enable_interface_endpoints = true
+  }
+
+  assert {
+    condition     = length(aws_nat_gateway.this) == 2 && length(output.nat_public_ips) == 2
+    error_message = "nat_per_az 면 AZ 마다 NAT 가 있어야 합니다."
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.alb_https) == 1
+    error_message = "alb_https_enabled 면 ALB 443 이 열려야 합니다."
+  }
+
+  assert {
+    condition     = toset(keys(aws_vpc_endpoint.interface)) == toset(["ecr.api", "ecr.dkr", "logs", "secretsmanager"])
+    error_message = "ECR(api, dkr), CloudWatch Logs, Secrets Manager 인터페이스 엔드포인트가 있어야 합니다."
+  }
+
+  assert {
+    condition     = alltrue([for e in aws_vpc_endpoint.interface : e.private_dns_enabled])
+    error_message = "인터페이스 엔드포인트는 프라이빗 DNS 를 써야 합니다."
   }
 }
 
