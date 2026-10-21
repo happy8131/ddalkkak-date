@@ -264,6 +264,46 @@ run "rds" {
   }
 }
 
+# Multi-AZ 와 인스턴스 크기는 변수로 바꿀 수 있다
+run "rds_multi_az" {
+  command = apply
+
+  module {
+    source = "../../modules/rds"
+  }
+
+  variables {
+    name_prefix       = "test"
+    subnet_ids        = ["subnet-aaaa1111", "subnet-bbbb2222"]
+    security_group_id = "sg-12345678"
+    multi_az          = true
+    instance_class    = "db.t3.large"
+  }
+
+  override_resource {
+    target = aws_db_instance.this
+    values = {
+      identifier = "test-postgres"
+      address    = "test-postgres.abcdefg.us-east-1.rds.amazonaws.com"
+      port       = 5432
+      db_name    = "ddalkkak"
+      master_user_secret = [{
+        secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-test-AbCdEf"
+      }]
+    }
+  }
+
+  assert {
+    condition     = aws_db_instance.this.multi_az == true && aws_db_instance.this.instance_class == "db.t3.large"
+    error_message = "multi_az 와 instance_class 변수가 반영되어야 합니다."
+  }
+
+  assert {
+    condition     = aws_db_instance.this.deletion_protection == true && aws_db_instance.this.publicly_accessible == false
+    error_message = "Multi-AZ 로 바꿔도 삭제 보호와 비공개는 유지되어야 합니다."
+  }
+}
+
 # --- ecs ---
 
 run "ecs" {
@@ -411,6 +451,47 @@ run "ecs" {
   assert {
     condition     = alltrue([for p in aws_appautoscaling_policy.cpu : p.target_tracking_scaling_policy_configuration[0].target_value == 70 && p.target_tracking_scaling_policy_configuration[0].predefined_metric_specification[0].predefined_metric_type == "ECSServiceAverageCPUUtilization"])
     error_message = "CPU 70% 목표 추적 정책이어야 합니다."
+  }
+}
+
+# --- secrets ---
+
+run "secrets" {
+  command = apply
+
+  module {
+    source = "../../modules/secrets"
+  }
+
+  variables {
+    name_prefix = "test"
+  }
+
+  # 카카오, LLM, Anthropic, 네이버 키 자리가 SecureString 으로 만들어진다
+  assert {
+    condition     = toset(keys(aws_ssm_parameter.this)) == toset(["kakao-rest-api-key", "llm-api-key", "anthropic-api-key", "naver-client-id", "naver-client-secret"])
+    error_message = "외부 API 키 자리 5개가 있어야 합니다."
+  }
+
+  assert {
+    condition     = alltrue([for p in aws_ssm_parameter.this : p.type == "SecureString"])
+    error_message = "API 키 파라미터는 모두 SecureString 이어야 합니다."
+  }
+
+  assert {
+    condition     = alltrue([for k, p in aws_ssm_parameter.this : p.name == "/test/${k}"])
+    error_message = "파라미터 이름은 /<접두사>/<키> 형식이어야 합니다."
+  }
+
+  # 코드에는 placeholder 만 있고 실제 값은 없다
+  assert {
+    condition     = alltrue([for p in aws_ssm_parameter.this : p.value == "REPLACE_ME"])
+    error_message = "코드에는 placeholder 값만 있어야 합니다."
+  }
+
+  assert {
+    condition     = length(output.parameter_arns) == 5
+    error_message = "파라미터 ARN 이 출력되어야 합니다."
   }
 }
 

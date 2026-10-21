@@ -91,6 +91,11 @@ run "wire_modules" {
   }
 
   assert {
+    condition     = length(output.api_key_parameter_names) == 5
+    error_message = "외부 API 키 파라미터 5개가 출력되어야 합니다."
+  }
+
+  assert {
     condition     = output.alb_dns_name != "" && output.alarm_topic_arn != ""
     error_message = "ALB 주소와 알람 토픽이 출력되어야 합니다."
   }
