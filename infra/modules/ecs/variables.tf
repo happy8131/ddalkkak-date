@@ -49,15 +49,15 @@ variable "repository_urls" {
 }
 
 variable "frontend_image_tag" {
-  description = "frontend 이미지 태그. 이후 배포는 CI/CD 가 태스크 정의를 갱신한다"
+  description = "frontend 이미지 태그. 생성 시점의 자리표시 값이며, 실제 배포는 CI/CD 가 git SHA 태그로 태스크 정의를 갱신한다"
   type        = string
-  default     = "latest"
+  default     = "bootstrap"
 }
 
 variable "backend_image_tag" {
-  description = "backend 이미지 태그. 이후 배포는 CI/CD 가 태스크 정의를 갱신한다"
+  description = "backend 이미지 태그. 생성 시점의 자리표시 값이며, 실제 배포는 CI/CD 가 git SHA 태그로 태스크 정의를 갱신한다"
   type        = string
-  default     = "latest"
+  default     = "bootstrap"
 }
 
 # --- DB (rds 모듈 출력) ---

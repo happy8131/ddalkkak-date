@@ -25,7 +25,7 @@ infra/
 | 모듈 | 리소스 |
 | --- | --- |
 | `network` | VPC, public / private-app / private-db 서브넷, IGW, NAT 게이트웨이, S3 VPC 엔드포인트, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
-| `ecr` | `frontend`, `backend` 리포지토리 (푸시 시 이미지 스캔, 최근 30개만 보관) |
+| `ecr` | `frontend`, `backend` 리포지토리 (푸시 시 이미지 스캔, 태그 변경 불가, 태그 없는 이미지 7일 뒤·나머지는 최근 30개만 보관) |
 | `rds` | PostgreSQL 15 `db.t3.medium` (비공개, 암호화, 삭제 보호, 백업 7일, 단일 AZ) |
 | `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스, ALB, CloudWatch 로그 그룹 |
 | `observability` | SNS 알람 토픽, ALB 5xx 비율 / 비정상 대상 / ECS CPU·메모리 / RDS CPU·연결 수 알람 |
@@ -47,14 +47,20 @@ infra/
 
 ## 첫 배포 순서
 
+ECR 태그는 **변경 불가(IMMUTABLE)**라서 `latest`처럼 같은 태그를 다시 push할 수 없고, 이미지는 항상 git SHA 태그로 올립니다. 서비스 생성 시점의 태그(`bootstrap`)는 자리표시일 뿐이며 실제 이미지는 배포 워크플로가 올립니다.
+
 1. 아래 "init / plan / apply"대로 `apply`해서 인프라를 만듭니다. 이 시점에는 ECR이 비어 있어서 ECS 태스크는 이미지를 받지 못해 기동에 실패합니다(정상입니다).
-2. `terraform output alb_dns_name`으로 주소를 확인하고, 그 주소를 `NEXT_PUBLIC_API_BASE_URL`로 넣어 프론트엔드 이미지를 빌드합니다.
-3. `terraform output ecr_repository_urls`의 주소로 이미지를 `latest` 태그로 push합니다(`aws ecr get-login-password` 후 `docker push`).
-4. ECS 서비스를 새로 배포하면 태스크가 기동합니다.
-   ```bash
-   aws ecs update-service --cluster <ecs_cluster_name> --service <서비스 이름> --force-new-deployment
-   ```
-5. `http://<ALB DNS>/`(프론트엔드)와 `http://<ALB DNS>/api/v1/...`(백엔드)로 확인하고, CloudWatch Logs `/ecs/ddalkkak-date-prod/*`에서 로그를 봅니다.
+2. "CI/CD" 절의 순서대로 GitHub Environment `prod`에 `AWS_DEPLOY_ROLE_ARN`과 `NEXT_PUBLIC_API_BASE_URL`(`terraform output alb_dns_name`의 주소)을 등록합니다.
+3. GitHub Actions에서 `Deploy Backend`, `Deploy Frontend`를 각각 **Run workflow**(workflow_dispatch)로 실행합니다. 이미지가 git SHA 태그로 ECR에 올라가고 ECS 서비스가 새 태스크 정의로 배포됩니다.
+4. `http://<ALB DNS>/`(프론트엔드)와 `http://<ALB DNS>/api/v1/...`(백엔드)로 확인하고, CloudWatch Logs `/ecs/ddalkkak-date-prod/*`에서 로그를 봅니다.
+
+수동으로 push해야 할 때는 SHA처럼 매번 다른 태그를 씁니다. 같은 태그를 다시 push하면 `ImageTagAlreadyExistsException`으로 실패합니다.
+
+```bash
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <계정 ID>.dkr.ecr.us-east-1.amazonaws.com
+docker build -t <repository_url>:$(git rev-parse HEAD) backend
+docker push <repository_url>:$(git rev-parse HEAD)
+```
 
 ## 테스트 (AWS 호출 없음)
 
