@@ -148,3 +148,38 @@ variable "log_retention_days" {
   type        = number
   default     = 30
 }
+
+variable "repository_arns" {
+  description = "ECR 리포지토리 ARN (키: frontend, backend). 태스크 실행 역할의 이미지 pull 권한 범위다"
+  type        = map(string)
+}
+
+variable "frontend_min_capacity" {
+  description = "frontend Auto Scaling 최소 태스크 수"
+  type        = number
+  default     = 1
+}
+
+variable "frontend_max_capacity" {
+  description = "frontend Auto Scaling 최대 태스크 수"
+  type        = number
+  default     = 2
+}
+
+variable "backend_min_capacity" {
+  description = "backend Auto Scaling 최소 태스크 수"
+  type        = number
+  default     = 1
+}
+
+variable "backend_max_capacity" {
+  description = "backend Auto Scaling 최대 태스크 수"
+  type        = number
+  default     = 2
+}
+
+variable "autoscaling_cpu_target" {
+  description = "Auto Scaling 목표 평균 CPU 사용률(%)"
+  type        = number
+  default     = 70
+}

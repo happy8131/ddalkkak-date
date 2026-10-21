@@ -8,6 +8,8 @@ locals {
       cpu               = var.frontend_cpu
       memory            = var.frontend_memory
       desired_count     = var.frontend_desired_count
+      min_capacity      = var.frontend_min_capacity
+      max_capacity      = var.frontend_max_capacity
       image             = "${var.repository_urls["frontend"]}:${var.frontend_image_tag}"
       health_check_path = "/"
       grace_seconds     = 60
@@ -17,6 +19,8 @@ locals {
       cpu               = var.backend_cpu
       memory            = var.backend_memory
       desired_count     = var.backend_desired_count
+      min_capacity      = var.backend_min_capacity
+      max_capacity      = var.backend_max_capacity
       image             = "${var.repository_urls["backend"]}:${var.backend_image_tag}"
       health_check_path = "/actuator/health"
       grace_seconds     = 180 # Spring Boot + Flyway 기동 시간을 감안한다
@@ -32,6 +36,14 @@ locals {
         { name = "PORT", value = tostring(var.frontend_port) },
         { name = "HOSTNAME", value = "0.0.0.0" },
       ]
+      # node:slim 이미지에는 curl 이 없어서 Node 22 내장 fetch 로 확인한다
+      healthCheck = {
+        command     = ["CMD", "node", "-e", "fetch('http://127.0.0.1:${var.frontend_port}/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 30
+      }
     }
     backend = {
       environment = [
@@ -45,6 +57,14 @@ locals {
         { name = "DB_USERNAME", valueFrom = "${var.db_secret_arn}:username::" },
         { name = "DB_PASSWORD", valueFrom = "${var.db_secret_arn}:password::" },
       ]
+      # eclipse-temurin 이미지에는 curl 이 있다. Spring Boot + Flyway 기동 시간을 startPeriod 로 기다린다
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -fsS http://localhost:${var.backend_port}/actuator/health || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 120
+      }
     }
   }
 }
@@ -92,22 +112,45 @@ resource "aws_iam_role" "task_execution" {
   tags = var.tags
 }
 
-resource "aws_iam_role_policy_attachment" "task_execution_managed" {
-  role       = aws_iam_role.task_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
+# AmazonECSTaskExecutionRolePolicy 는 로그/ECR 권한이 모든 리소스(*)에 걸려 있어서 쓰지 않고,
+# 이 스택의 ECR 리포지토리, 로그 그룹, DB Secret 으로 범위를 좁힌 정책을 직접 둔다
+resource "aws_iam_role_policy" "task_execution" {
+  name = "task-execution"
+  role = aws_iam_role.task_execution.id
 
-data "aws_iam_policy_document" "read_db_secret" {
-  statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [var.db_secret_arn]
-  }
-}
-
-resource "aws_iam_role_policy" "task_execution_db_secret" {
-  name   = "read-db-secret"
-  role   = aws_iam_role.task_execution.id
-  policy = data.aws_iam_policy_document.read_db_secret.json
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EcrLogin"
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*" # 리소스 수준 권한을 지원하지 않는다
+      },
+      {
+        Sid    = "EcrPull"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+        ]
+        Resource = values(var.repository_arns)
+      },
+      {
+        Sid      = "WriteLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = [for lg in aws_cloudwatch_log_group.this : "${lg.arn}:*"]
+      },
+      {
+        Sid      = "ReadDbSecret"
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = var.db_secret_arn
+      },
+    ]
+  })
 }
 
 # 태스크 역할: 애플리케이션이 AWS API 를 호출할 때 쓴다. 지금은 권한이 없고 필요할 때 추가한다
@@ -263,10 +306,43 @@ resource "aws_ecs_service" "this" {
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-${each.key}" })
 
-  # 이미지 배포는 CI/CD 가 태스크 정의를 갱신하는 방식이라 Terraform 이 되돌리지 않게 한다
+  # 이미지 배포는 CI/CD 가 태스크 정의를 갱신하는 방식이라 Terraform 이 되돌리지 않게 한다.
+  # desired_count 는 Auto Scaling 이 조정하므로 처음 생성할 때의 값만 쓴다
   lifecycle {
-    ignore_changes = [task_definition]
+    ignore_changes = [task_definition, desired_count]
   }
 
   depends_on = [aws_lb_listener.http]
+}
+
+# --- Application Auto Scaling (CPU 기반, 초기에는 최소/최대 값만 둔다) ---
+
+resource "aws_appautoscaling_target" "this" {
+  for_each = local.services
+
+  service_namespace  = "ecs"
+  scalable_dimension = "ecs:service:DesiredCount"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.this[each.key].name}"
+  min_capacity       = each.value.min_capacity
+  max_capacity       = each.value.max_capacity
+}
+
+resource "aws_appautoscaling_policy" "cpu" {
+  for_each = local.services
+
+  name               = "${var.name_prefix}-${each.key}-cpu"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.this[each.key].service_namespace
+  scalable_dimension = aws_appautoscaling_target.this[each.key].scalable_dimension
+  resource_id        = aws_appautoscaling_target.this[each.key].resource_id
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = var.autoscaling_cpu_target
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+  }
 }

@@ -27,13 +27,16 @@ infra/
 | `network` | VPC, public / private-app / private-db 서브넷, IGW, NAT 게이트웨이, S3 VPC 엔드포인트, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
 | `ecr` | `frontend`, `backend` 리포지토리 (푸시 시 이미지 스캔, 태그 변경 불가, 태그 없는 이미지 7일 뒤·나머지는 최근 30개만 보관) |
 | `rds` | PostgreSQL 15 `db.t3.medium` (비공개, 암호화, 삭제 보호, 백업 7일, 단일 AZ) |
-| `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스, ALB, CloudWatch 로그 그룹 |
+| `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스(CPU 기반 Auto Scaling), ALB, CloudWatch 로그 그룹, 태스크 실행·태스크 역할 |
 | `observability` | SNS 알람 토픽, ALB 5xx 비율 / 비정상 대상 / ECS CPU·메모리 / RDS CPU·연결 수 알람 |
 
 - **라우팅:** ALB 80번 포트에서 `/api/*`는 backend(8080), 그 외는 frontend(3000)로 보냅니다. 백엔드 헬스체크(`/actuator/health`)는 ALB가 타겟에 직접 호출하며 외부에는 노출되지 않습니다.
 - **비밀 값:** RDS가 마스터 비밀번호를 Secrets Manager에 직접 만들고 관리합니다(`manage_master_user_password`). 비밀번호는 코드, tfvars, Terraform 변수, state에 나타나지 않고, ECS가 컨테이너 시작 시점에 `DB_USERNAME`, `DB_PASSWORD`로 주입합니다.
 - **알람:** `alarm_email`을 지정하면 SNS 이메일 구독이 만들어지고, 받은 메일의 확인 링크를 눌러야 활성화됩니다. 비워 두면 토픽만 만들어집니다.
-- **배포:** 서비스는 `task_definition` 변경을 무시합니다(`ignore_changes`). 이후 이미지 배포는 CI/CD가 태스크 정의를 갱신하는 방식이라 Terraform이 되돌리지 않습니다.
+- **배포:** 서비스는 `task_definition`과 `desired_count` 변경을 무시합니다(`ignore_changes`). 이미지 배포는 태스크 정의를 따로 갱신하는 방식이라 Terraform이 되돌리지 않고, 태스크 수는 Auto Scaling이 조정하므로 처음 생성할 때의 값만 씁니다. 배포가 실패하면 Deployment Circuit Breaker가 이전 버전으로 되돌립니다.
+- **헬스체크:** ALB 타겟 그룹(frontend `/`, backend `/actuator/health`)과 컨테이너 헬스체크(task definition)를 둘 다 둡니다. frontend 이미지(`node:slim`)에는 `curl`이 없어서 Node 내장 `fetch`로 확인하고, backend는 `curl`로 확인합니다. backend는 Spring Boot와 Flyway 기동 시간을 위해 시작 유예 시간(120초)을 둡니다.
+- **Auto Scaling:** 서비스마다 평균 CPU 70%를 목표로 하는 목표 추적 정책이며, 초기 범위는 최소 1 / 최대 2개입니다(`*_min_capacity`, `*_max_capacity`로 조정).
+- **IAM 최소 권한:** 태스크 실행 역할은 관리형 `AmazonECSTaskExecutionRolePolicy`(로그·ECR이 모든 리소스에 열려 있음) 대신, 이 스택의 ECR 리포지토리 pull, 로그 그룹 쓰기, DB Secret 읽기만 허용하는 정책을 직접 둡니다. 태스크 역할은 애플리케이션이 AWS API를 쓰지 않아 권한이 없습니다.
 
 ### 알아 둘 점
 
