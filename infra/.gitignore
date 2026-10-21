@@ -5,10 +5,9 @@
 crash.log
 crash.*.log
 
-# 실제 변수 값과 백엔드 설정은 커밋하지 않는다 (*.example 파일만 커밋)
+# 실제 변수 값은 커밋하지 않는다 (*.example 파일만 커밋)
 *.tfvars
 *.tfvars.json
-backend.hcl
 
 # plan 결과 파일 (apply 전에 확인용으로만 쓴다)
 *tfplan*

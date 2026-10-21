@@ -8,9 +8,8 @@
 
 ```
 infra/
-├── bootstrap/        # Remote State용 S3 버킷 (최초 1회, 상태는 로컬에 보관)
 ├── envs/
-│   └── prod/         # prod 환경 루트 모듈 (상태는 S3에 보관)
+│   └── prod/         # prod 환경 루트 모듈
 └── modules/
     ├── network/      # VPC, 서브넷, 보안 그룹
     ├── ecr/          # frontend / backend 이미지 저장소
@@ -21,9 +20,17 @@ infra/
 
 모듈은 현재 뼈대(버전 고정, 공통 변수)만 있고, 실제 리소스는 후속 티켓에서 추가합니다.
 
+## 상태(state) 관리
+
+S3 백엔드(원격 상태)는 쓰지 않습니다. 상태는 `infra/envs/prod/terraform.tfstate`에 **로컬 파일**로 저장됩니다.
+
+- `*.tfstate*`는 `.gitignore`로 제외되어 커밋되지 않습니다. 상태에는 비밀 값이 들어갈 수 있으니 공유 저장소나 메신저에 올리지 마세요.
+- 상태 파일을 잃으면 Terraform이 기존 리소스를 알아보지 못하므로, apply한 뒤에는 `terraform.tfstate`를 별도로 백업해 두세요.
+- 로컬 상태는 잠금이 없어서 **한 사람만** apply해야 합니다. 여럿이 함께 쓰게 되면 원격 상태 도입을 다시 검토합니다.
+
 ## 사전 준비
 
-- Terraform `>= 1.10, < 2.0` (S3 네이티브 락을 쓰기 위해 1.10 이상 필요), AWS provider `~> 6.0`
+- Terraform `>= 1.10, < 2.0`, AWS provider `~> 6.0`
 - AWS CLI v2
 
 ### AWS 인증 (장기 액세스 키 사용 금지)
@@ -39,28 +46,12 @@ aws sts get-caller-identity          # 올바른 계정인지 반드시 확인
 
 코드와 `tfvars`에는 자격 증명을 넣지 않습니다. 세션이 만료되면 `aws sso login`을 다시 실행합니다.
 
-## 1. Remote State 부트스트랩 (최초 1회)
-
-상태 파일을 저장할 S3 버킷(버저닝, AES256 암호화, 퍼블릭 차단, HTTPS 강제)을 만듭니다. 상태 잠금은 DynamoDB 없이 S3 네이티브 락(`use_lockfile`)을 씁니다. 버킷 이름은 `ddalkkak-date-tfstate-<AWS 계정 ID>`입니다.
-
-```bash
-cd infra/bootstrap
-cp terraform.tfvars.example terraform.tfvars   # owner 수정
-terraform init
-terraform plan -out=tfplan
-terraform apply tfplan
-terraform output state_bucket_name             # 다음 단계에서 사용
-```
-
-bootstrap의 상태(`terraform.tfstate`)는 로컬에만 있고 커밋하지 않습니다. 버킷에는 `prevent_destroy`가 걸려 있어 `destroy`로 지워지지 않습니다.
-
-## 2. prod 환경 init / plan / apply
+## init / plan / apply
 
 ```bash
 cd infra/envs/prod
 cp terraform.tfvars.example terraform.tfvars   # owner 수정
-cp backend.hcl.example backend.hcl             # bucket 에 위에서 확인한 버킷 이름 입력
-terraform init -backend-config=backend.hcl
+terraform init
 terraform fmt -recursive
 terraform validate
 terraform plan -out=tfplan
@@ -84,7 +75,7 @@ prod에는 환경이 하나뿐이라 잘못 apply하면 바로 운영에 영향�
 
 - **공통 태그**: 모든 리소스에 `project`, `env=prod`, `owner`가 provider `default_tags`로 자동 적용됩니다. 값은 `variables.tf`(`project`, `env`, `owner`)에서 정합니다.
 - **버전 고정**: `required_version`과 provider 버전을 고정하고, `.terraform.lock.hcl`은 커밋합니다(windows/linux/macOS 해시 포함). provider를 올릴 때는 `terraform init -upgrade` 후 lock 파일 변경분을 함께 커밋합니다.
-- **커밋하지 않는 파일**: `.terraform/`, `*.tfstate*`, `*.tfvars`, `backend.hcl`, `*tfplan*` (`infra/.gitignore`). 예시 파일(`*.tfvars.example`, `backend.hcl.example`)만 커밋합니다.
+- **커밋하지 않는 파일**: `.terraform/`, `*.tfstate*`, `*.tfvars`, `*tfplan*` (`infra/.gitignore`). 예시 파일(`terraform.tfvars.example`)만 커밋합니다.
 - **비밀 값**: DB 비밀번호, API 키 등은 `tfvars`나 코드에 넣지 않고 Secrets Manager / SSM Parameter Store를 씁니다.
 - AWS 콘솔에서 리소스를 수동으로 바꾸지 않습니다. 모든 변경은 Terraform으로 합니다.
-- 포맷과 검증: 커밋 전에 `terraform fmt -recursive`와 각 디렉터리의 `terraform validate`를 통과시킵니다.
+- 포맷과 검증: 커밋 전에 `terraform fmt -recursive`와 `terraform validate`를 통과시킵니다.
