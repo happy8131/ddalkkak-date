@@ -146,7 +146,7 @@ resource "aws_route_table_association" "private_db" {
 
 resource "aws_security_group" "alb" {
   name        = "${var.name_prefix}-alb"
-  description = "ALB: 인터넷에서 HTTP 허용"
+  description = "ALB: allow HTTP from the internet"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-alb-sg" })
@@ -182,7 +182,7 @@ resource "aws_vpc_security_group_egress_rule" "alb_all" {
 
 resource "aws_security_group" "app" {
   name        = "${var.name_prefix}-app"
-  description = "ECS 태스크: ALB에서 오는 트래픽만 허용"
+  description = "ECS tasks: allow traffic from the ALB only"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-app-sg" })
@@ -216,7 +216,7 @@ resource "aws_vpc_security_group_egress_rule" "app_all" {
 
 resource "aws_security_group" "rds" {
   name        = "${var.name_prefix}-rds"
-  description = "RDS: ECS 태스크에서 오는 PostgreSQL만 허용"
+  description = "RDS: allow PostgreSQL from ECS tasks only"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-rds-sg" })
@@ -255,7 +255,7 @@ resource "aws_security_group" "endpoints" {
   count = var.enable_interface_endpoints ? 1 : 0
 
   name        = "${var.name_prefix}-endpoints"
-  description = "VPC 인터페이스 엔드포인트: ECS 태스크에서 오는 HTTPS 만 허용"
+  description = "VPC interface endpoints: allow HTTPS from ECS tasks only"
   vpc_id      = aws_vpc.this.id
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-endpoints-sg" })

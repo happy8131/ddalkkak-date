@@ -7,3 +7,9 @@ owner = "your-name"
 
 # RDS 다중 AZ (안정화 후 true)
 # db_multi_az = false
+
+# RDS 자동 백업 보관 일수 (기본 7). AWS 무료 플랜 계정은 1만 허용되므로 그 경우 1로 지정한다
+# db_backup_retention_days = 1
+
+# RDS 인스턴스 클래스 (기본 db.t3.medium). AWS 무료 플랜 계정은 이 크기를 쓸 수 없어서 db.t3.micro 로 낮춘다
+# db_instance_class = "db.t3.micro"

@@ -55,3 +55,9 @@ variable "db_instance_class" {
   type        = string
   default     = "db.t3.medium"
 }
+
+variable "db_backup_retention_days" {
+  description = "RDS 자동 백업 보관 일수. AWS 무료 플랜 계정은 1일까지만 허용된다 (유료 계정은 7 권장)"
+  type        = number
+  default     = 7
+}
