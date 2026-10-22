@@ -34,12 +34,13 @@ module "ecr" {
 module "rds" {
   source = "../../modules/rds"
 
-  name_prefix       = local.name_prefix
-  tags              = local.common_tags
-  subnet_ids        = module.network.private_db_subnet_ids
-  security_group_id = module.network.rds_security_group_id
-  multi_az          = var.db_multi_az
-  instance_class    = var.db_instance_class
+  name_prefix           = local.name_prefix
+  tags                  = local.common_tags
+  subnet_ids            = module.network.private_db_subnet_ids
+  security_group_id     = module.network.rds_security_group_id
+  multi_az              = var.db_multi_az
+  instance_class        = var.db_instance_class
+  backup_retention_days = var.db_backup_retention_days
 }
 
 module "ecs" {
