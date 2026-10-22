@@ -81,6 +81,15 @@ run "network" {
     error_message = "ECS 태스크 보안 그룹이 인터넷에 열려 있습니다."
   }
 
+  # EC2 보안 그룹 설명은 ASCII 만 허용한다 (한글이면 CreateSecurityGroup 이 400 으로 실패한다)
+  assert {
+    condition = alltrue([
+      for sg in [aws_security_group.alb, aws_security_group.app, aws_security_group.rds] :
+      can(regex("^[ -~]*$", sg.description))
+    ])
+    error_message = "보안 그룹 description 은 ASCII 문자만 써야 합니다."
+  }
+
   # 기본값: NAT 1개, HTTP 만 공개, S3 게이트웨이 엔드포인트만 (인터페이스 엔드포인트는 비용 때문에 끔)
   assert {
     condition     = length(aws_nat_gateway.this) == 1 && length(aws_route_table.private_app) == 2
@@ -132,6 +141,11 @@ run "network_high_availability" {
   assert {
     condition     = toset(keys(aws_vpc_endpoint.interface)) == toset(["ecr.api", "ecr.dkr", "logs", "secretsmanager"])
     error_message = "ECR(api, dkr), CloudWatch Logs, Secrets Manager 인터페이스 엔드포인트가 있어야 합니다."
+  }
+
+  assert {
+    condition     = can(regex("^[ -~]*$", aws_security_group.endpoints[0].description))
+    error_message = "엔드포인트 보안 그룹 description 은 ASCII 문자만 써야 합니다."
   }
 
   assert {
