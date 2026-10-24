@@ -63,8 +63,15 @@ override_resource {
   }
 }
 
+# 로컬 terraform.tfvars 의 값(NAT 끔, 무료 플랜용 DB 사양 등)이 테스트에 새어 들어오지 않도록
+# 같은 이름의 변수를 기본값으로 고정한다. 다른 값이 필요한 run 은 자기 variables 에서 덮어쓴다
 variables {
-  owner = "tester"
+  owner                    = "tester"
+  enable_nat_gateway       = true
+  db_instance_class        = "db.t3.medium"
+  db_backup_retention_days = 7
+  db_multi_az              = false
+  alarm_email              = ""
 }
 
 run "wire_modules" {
