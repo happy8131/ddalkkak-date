@@ -287,9 +287,11 @@ resource "aws_ecs_service" "this" {
   health_check_grace_period_seconds = each.value.grace_seconds
 
   network_configuration {
-    subnets          = var.private_app_subnet_ids
+    # NAT 없이 쓰는 구성(assign_public_ip = true)에서는 퍼블릭 서브넷에서 공인 IP 로 직접 인터넷에 나간다.
+    # 인바운드는 보안 그룹이 ALB 에서 오는 트래픽만 허용하므로 공인 IP 가 있어도 직접 접근은 막힌다
+    subnets          = var.assign_public_ip ? var.public_subnet_ids : var.private_app_subnet_ids
     security_groups  = [var.app_security_group_id]
-    assign_public_ip = false
+    assign_public_ip = var.assign_public_ip
   }
 
   load_balancer {

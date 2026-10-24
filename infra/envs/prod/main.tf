@@ -20,8 +20,9 @@ locals {
 module "network" {
   source = "../../modules/network"
 
-  name_prefix = local.name_prefix
-  tags        = local.common_tags
+  name_prefix        = local.name_prefix
+  tags               = local.common_tags
+  enable_nat_gateway = var.enable_nat_gateway
 }
 
 module "ecr" {
@@ -55,6 +56,9 @@ module "ecs" {
   private_app_subnet_ids = module.network.private_app_subnet_ids
   alb_security_group_id  = module.network.alb_security_group_id
   app_security_group_id  = module.network.app_security_group_id
+
+  # NAT 가 없으면 태스크가 공인 IP 로 직접 나가야 한다
+  assign_public_ip = !var.enable_nat_gateway
 
   repository_urls    = module.ecr.repository_urls
   repository_arns    = module.ecr.repository_arns

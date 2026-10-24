@@ -61,3 +61,9 @@ variable "db_backup_retention_days" {
   type        = number
   default     = 7
 }
+
+variable "enable_nat_gateway" {
+  description = "false 면 NAT 게이트웨이를 만들지 않고 ECS 태스크를 공인 IP 가 붙는 퍼블릭 서브넷에 둔다(월 약 $35 절감, 태스크가 인터넷에 직접 노출되는 대신 인바운드는 ALB 만 허용)"
+  type        = bool
+  default     = true
+}

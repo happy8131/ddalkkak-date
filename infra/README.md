@@ -25,7 +25,7 @@ infra/
 
 | 모듈 | 리소스 |
 | --- | --- |
-| `network` | VPC, public / private-app / private-db 서브넷, IGW, NAT 게이트웨이, S3 VPC 엔드포인트, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
+| `network` | VPC, public / private-app / private-db 서브넷, IGW, NAT 게이트웨이(선택), S3 VPC 엔드포인트, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
 | `ecr` | `frontend`, `backend` 리포지토리 (푸시 시 이미지 스캔, 태그 변경 불가, 태그 없는 이미지 7일 뒤·나머지는 최근 30개만 보관) |
 | `rds` | PostgreSQL 15 `db.t3.medium` (비공개, 암호화, 삭제 보호, 백업 7일, 단일 AZ) |
 | `secrets` | 외부 API 키 자리 SSM 파라미터 5개(카카오, LLM, Anthropic, 네이버 ID/Secret). 값은 placeholder이고 별도로 주입 |
@@ -53,9 +53,24 @@ infra/
   이후 apply가 주입한 값을 placeholder로 되돌리지 않습니다(`ignore_changes`). 이 키들은 아직 어떤 ECS 태스크에도 주입하지 않습니다. 사용하는 태스크(예: 장소 수집 배치)를 만들 때 `secrets`에 `parameter_arns`를 연결하고 실행 역할에 `ssm:GetParameters` 권한을 추가합니다.
 - **네이버 키:** 장소 수집에서는 네이버 지역 검색을 쓰지 않지만, PRD의 블로그 후기 검색용으로 자리만 만들어 두었습니다.
 
+### NAT 없이 쓰는 구성 (비용 절감)
+
+NAT 게이트웨이는 켜 두면 월 약 $35가 들고 중지할 수 없어서(삭제만 가능), 테스트 환경에서는 가장 큰 고정비입니다. `terraform.tfvars`에 아래 한 줄을 넣으면 NAT와 고정 IP를 만들지 않습니다.
+
+```hcl
+enable_nat_gateway = false
+```
+
+- ECS 태스크가 **퍼블릭 서브넷에서 공인 IP를 받아** 직접 인터넷으로 나갑니다(ECR 이미지 pull, 외부 API 호출). NAT만 끄고 태스크를 프라이빗에 두면 이미지를 받지 못하므로, 두 설정은 이 변수 하나로 함께 전환됩니다.
+- 보안 경계는 유지됩니다. 태스크 보안 그룹은 ALB에서 오는 트래픽만 허용하고, RDS는 계속 프라이빗이며 태스크에서만 접근됩니다. 태스크 공인 IP로 앱 포트(3000, 8080)에 직접 접속해도 연결되지 않는 것을 확인했습니다.
+- 공인 IPv4는 개당 월 약 $3.6이라 태스크 2개면 약 $7이 듭니다. NAT 절감분(약 $35)에서 빼면 순절감은 약 $28입니다. 태스크 수가 늘수록 줄어듭니다.
+- 외부 API 허용 목록에 쓸 고정 출구 IP가 없어집니다. 태스크가 교체될 때마다 공인 IP가 바뀝니다.
+- 이미 NAT가 있는 환경에서 끄면 프라이빗 라우트 테이블에 NAT를 가리키는 `blackhole` 경로가 남을 수 있습니다. 라우트 테이블의 `route`는 provider가 계산하는 속성이라, 블록을 없애도 기존 경로를 지우지 않기 때문입니다. 태스크가 퍼블릭 서브넷을 쓰므로 동작에는 영향이 없습니다. 다시 NAT를 켜면 새 NAT를 가리키도록 갱신됩니다.
+- 실서비스에서는 다시 `true`(기본값)로 두고 태스크를 프라이빗 서브넷에 두는 구성을 권장합니다.
+
 ### 알아 둘 점
 
-- **비용:** NAT 게이트웨이, ALB, RDS `db.t3.medium`이 상시 비용입니다.
+- **비용:** NAT 게이트웨이(끌 수 있음, 위 "NAT 없이 쓰는 구성" 참고), ALB, RDS가 상시 비용입니다.
 - **NAT 가용성 / 비용 선택:** 기본은 NAT 1개(`nat_per_az = false`)입니다. 이 경우 NAT가 있는 AZ에 장애가 나면 private 서브넷의 아웃바운드(이미지 pull 등)가 모두 끊깁니다. 가용성이 더 중요해지면 `nat_per_az = true`로 AZ마다 NAT를 두며 NAT 비용이 AZ 수만큼 늘어납니다. 현재 `envs/prod`는 기본값을 쓰고, 바꾸려면 `module "network"`에 `nat_per_az = true`를 넣습니다.
 - **VPC 엔드포인트:** S3 게이트웨이 엔드포인트는 무료라서 항상 켜 둡니다(ECR 이미지 레이어가 S3에서 내려오므로 NAT 트래픽이 줄어듭니다). ECR(api, dkr), CloudWatch Logs, Secrets Manager 인터페이스 엔드포인트는 AZ마다 시간당 요금이 붙어서 기본은 끄고, NAT 데이터 처리 비용이 커질 때 `enable_interface_endpoints = true`로 켭니다.
 - **보안 그룹:** ALB는 80만 공개합니다. HTTPS 리스너(ACM)를 붙일 때 `alb_https_enabled = true`로 443을 엽니다.

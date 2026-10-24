@@ -62,8 +62,10 @@ resource "aws_subnet" "private_db" {
 # 기본은 비용 절감을 위해 하나만 둔다. 이 경우 NAT 가 있는 AZ 에 장애가 나면 모든 private 아웃바운드가 끊긴다.
 # nat_per_az = true 면 AZ 마다 NAT 를 두어 AZ 장애가 다른 AZ 로 번지지 않게 한다 (NAT 비용이 AZ 수만큼 늘어난다)
 
+# enable_nat_gateway = false 면 NAT 를 만들지 않는다. 이때 ECS 태스크는 퍼블릭 서브넷에서
+# 공인 IP 로 직접 인터넷에 나가야 한다 (ecs 모듈의 assign_public_ip). 비용 절감용 구성이다
 locals {
-  nat_count = var.nat_per_az ? var.az_count : 1
+  nat_count = var.enable_nat_gateway ? (var.nat_per_az ? var.az_count : 1) : 0
 }
 
 resource "aws_eip" "nat" {
@@ -113,9 +115,14 @@ resource "aws_route_table" "private_app" {
 
   vpc_id = aws_vpc.this.id
 
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this[var.nat_per_az ? count.index : 0].id
+  # NAT 가 없으면 기본 경로도 없다 (프라이빗 서브넷은 VPC 안에서만 통신한다)
+  dynamic "route" {
+    for_each = var.enable_nat_gateway ? [1] : []
+
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.this[var.nat_per_az ? count.index : 0].id
+    }
   }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-private-app-rt-${local.azs[count.index]}" })

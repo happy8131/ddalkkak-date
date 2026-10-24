@@ -55,3 +55,9 @@ variable "enable_interface_endpoints" {
   type        = bool
   default     = false
 }
+
+variable "enable_nat_gateway" {
+  description = "false 면 NAT 게이트웨이를 만들지 않는다(월 약 $35 절감). 이때 ECS 태스크는 공인 IP 를 받는 퍼블릭 서브넷에 두어야 한다"
+  type        = bool
+  default     = true
+}
