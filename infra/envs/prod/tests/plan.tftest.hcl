@@ -100,3 +100,17 @@ run "wire_modules" {
     error_message = "ALB 주소와 알람 토픽이 출력되어야 합니다."
   }
 }
+
+# 비용 절감 구성: NAT 를 끄면 prod 전체가 문제없이 연결된다
+run "wire_modules_no_nat" {
+  command = apply
+
+  variables {
+    enable_nat_gateway = false
+  }
+
+  assert {
+    condition     = output.alb_dns_name != "" && length(output.ecs_service_names) == 2
+    error_message = "NAT 를 꺼도 ALB 와 ECS 서비스가 구성되어야 합니다."
+  }
+}

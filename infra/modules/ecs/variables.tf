@@ -183,3 +183,9 @@ variable "autoscaling_cpu_target" {
   type        = number
   default     = 70
 }
+
+variable "assign_public_ip" {
+  description = "true 면 태스크를 퍼블릭 서브넷에 두고 공인 IP 를 붙인다(NAT 없이 이미지 pull / 외부 API 호출). false 면 프라이빗 서브넷 + NAT"
+  type        = bool
+  default     = false
+}

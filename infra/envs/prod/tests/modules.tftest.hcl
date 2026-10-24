@@ -154,6 +154,44 @@ run "network_high_availability" {
   }
 }
 
+# NAT 를 끈 구성 (비용 절감): NAT 와 고정 IP 가 없다.
+# 라우트 테이블의 route 는 계산 속성이라 mock 이 가짜 경로를 채워 넣으므로 경로 내용은 단언하지 않는다.
+# 실제 환경에서 기존 경로가 남는지는 apply 후 확인한다 (README 참고)
+run "network_no_nat" {
+  command = apply
+
+  module {
+    source = "../../modules/network"
+  }
+
+  variables {
+    name_prefix        = "test"
+    enable_nat_gateway = false
+  }
+
+  assert {
+    condition     = length(aws_nat_gateway.this) == 0 && length(aws_eip.nat) == 0
+    error_message = "enable_nat_gateway 가 false 면 NAT 게이트웨이와 고정 IP 가 없어야 합니다."
+  }
+
+  # 공개 서브넷은 IGW 로 나간다
+  assert {
+    condition     = anytrue([for r in aws_route_table.public.route : r.cidr_block == "0.0.0.0/0" && r.gateway_id != ""])
+    error_message = "퍼블릭 서브넷은 인터넷 게이트웨이로 나가야 합니다."
+  }
+
+  # NAT 를 꺼도 보안 그룹 경계는 그대로: 태스크는 ALB 에서 오는 트래픽만, RDS 는 태스크에서만 받는다
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.app_frontend.cidr_ipv4 == null && aws_vpc_security_group_ingress_rule.app_backend.cidr_ipv4 == null && aws_vpc_security_group_ingress_rule.rds_postgres.cidr_ipv4 == null
+    error_message = "NAT 를 꺼도 태스크와 RDS 는 인터넷에서 직접 접근할 수 없어야 합니다."
+  }
+
+  assert {
+    condition     = length(output.nat_gateway_ids) == 0 && length(output.nat_public_ips) == 0
+    error_message = "NAT 출력은 비어 있어야 합니다."
+  }
+}
+
 # --- ecr ---
 
 run "ecr" {
@@ -465,6 +503,48 @@ run "ecs" {
   assert {
     condition     = alltrue([for p in aws_appautoscaling_policy.cpu : p.target_tracking_scaling_policy_configuration[0].target_value == 70 && p.target_tracking_scaling_policy_configuration[0].predefined_metric_specification[0].predefined_metric_type == "ECSServiceAverageCPUUtilization"])
     error_message = "CPU 70% 목표 추적 정책이어야 합니다."
+  }
+}
+
+# NAT 없는 구성: 태스크를 퍼블릭 서브넷에 두고 공인 IP 를 붙인다
+run "ecs_public_ip" {
+  command = apply
+
+  module {
+    source = "../../modules/ecs"
+  }
+
+  variables {
+    name_prefix            = "test"
+    aws_region             = "us-east-1"
+    assign_public_ip       = true
+    vpc_id                 = "vpc-12345678"
+    public_subnet_ids      = ["subnet-aaaa1111", "subnet-bbbb2222"]
+    private_app_subnet_ids = ["subnet-cccc3333", "subnet-dddd4444"]
+    alb_security_group_id  = "sg-11111111"
+    app_security_group_id  = "sg-22222222"
+    repository_urls = {
+      frontend = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test/frontend"
+      backend  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test/backend"
+    }
+    repository_arns = {
+      frontend = "arn:aws:ecr:us-east-1:123456789012:repository/test/frontend"
+      backend  = "arn:aws:ecr:us-east-1:123456789012:repository/test/backend"
+    }
+    db_address    = "test-postgres.abcdefg.us-east-1.rds.amazonaws.com"
+    db_port       = 5432
+    db_name       = "ddalkkak"
+    db_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-test-AbCdEf"
+  }
+
+  assert {
+    condition     = alltrue([for s in aws_ecs_service.this : s.network_configuration[0].assign_public_ip == true])
+    error_message = "assign_public_ip 가 true 면 태스크에 공인 IP 가 붙어야 합니다."
+  }
+
+  assert {
+    condition     = alltrue([for s in aws_ecs_service.this : toset(s.network_configuration[0].subnets) == toset(["subnet-aaaa1111", "subnet-bbbb2222"])])
+    error_message = "공인 IP 구성에서는 태스크가 퍼블릭 서브넷에 있어야 합니다."
   }
 }
 
