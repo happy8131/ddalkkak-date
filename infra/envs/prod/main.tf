@@ -92,3 +92,15 @@ module "secrets" {
   name_prefix = local.name_prefix
   tags        = local.common_tags
 }
+
+# GitHub Actions 배포용 IAM 사용자 (액세스 키는 Terraform 밖에서 발급)
+module "cicd" {
+  source = "../../modules/cicd"
+
+  name_prefix = local.name_prefix
+  tags        = local.common_tags
+
+  ecr_repository_arns = module.ecr.repository_arns
+  ecs_service_arns    = module.ecs.service_arns
+  pass_role_arns      = [module.ecs.task_execution_role_arn, module.ecs.task_role_arn]
+}

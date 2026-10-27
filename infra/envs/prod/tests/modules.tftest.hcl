@@ -27,6 +27,10 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:iam::123456789012:role/mock-role" }
   }
 
+  mock_resource "aws_iam_user" {
+    defaults = { arn = "arn:aws:iam::123456789012:user/mock-user" }
+  }
+
   mock_resource "aws_lb" {
     defaults = {
       arn        = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/mock-alb/0123456789abcdef"
@@ -639,5 +643,63 @@ run "observability" {
   assert {
     condition     = length(aws_sns_topic_subscription.email) == 0
     error_message = "alarm_email 이 비어 있으면 SNS 구독을 만들지 않아야 합니다."
+  }
+}
+
+# --- cicd ---
+
+run "cicd" {
+  command = apply
+
+  module {
+    source = "../../modules/cicd"
+  }
+
+  variables {
+    name_prefix = "test"
+    ecr_repository_arns = {
+      frontend = "arn:aws:ecr:us-east-1:123456789012:repository/test/frontend"
+      backend  = "arn:aws:ecr:us-east-1:123456789012:repository/test/backend"
+    }
+    ecs_service_arns = {
+      frontend = "arn:aws:ecs:us-east-1:123456789012:service/test-cluster/test-frontend"
+      backend  = "arn:aws:ecs:us-east-1:123456789012:service/test-cluster/test-backend"
+    }
+    pass_role_arns = [
+      "arn:aws:iam::123456789012:role/test-ecs-task-execution",
+      "arn:aws:iam::123456789012:role/test-ecs-task",
+    ]
+  }
+
+  # 액세스 키는 Terraform 이 만들지 않는다 (시크릿이 state 에 남지 않게 한다)
+  assert {
+    condition     = aws_iam_user.deploy.name == "test-github-deploy"
+    error_message = "배포 IAM 사용자 이름이 {name_prefix}-github-deploy 여야 합니다."
+  }
+
+  # 권한은 ECR push 와 ECS 서비스 갱신으로 한정하고 Terraform 인프라 변경 권한은 없다
+  assert {
+    condition = alltrue([
+      for st in jsondecode(aws_iam_user_policy.deploy.policy).Statement :
+      !anytrue([for a in flatten([st.Action]) : a == "*" || endswith(a, ":*")])
+    ])
+    error_message = "배포 역할에 와일드카드 권한(예: ecs:*)이 있으면 안 됩니다."
+  }
+
+  assert {
+    condition = alltrue([
+      for st in jsondecode(aws_iam_user_policy.deploy.policy).Statement :
+      !anytrue([for a in flatten([st.Action]) : startswith(a, "ec2:") || startswith(a, "rds:") || startswith(a, "iam:Create") || startswith(a, "iam:Attach")])
+    ])
+    error_message = "배포 역할에 인프라 변경 권한이 있으면 안 됩니다."
+  }
+
+  # iam:PassRole 은 지정한 두 역할과 ecs-tasks 에만 허용한다
+  assert {
+    condition = anytrue([
+      for st in jsondecode(aws_iam_user_policy.deploy.policy).Statement :
+      st.Sid == "PassTaskRoles" && length(st.Resource) == 2 && st.Condition.StringEquals["iam:PassedToService"] == "ecs-tasks.amazonaws.com"
+    ])
+    error_message = "PassRole 은 태스크 역할 2개와 ecs-tasks 로 제한되어야 합니다."
   }
 }

@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 현재 구현 상태
 
-- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39), 코스 생성 API `POST /api/v1/courses/generate` (KAN-13), 장소 수집 배치 + AI 큐레이션 (KAN-16), `infra/` Terraform 뼈대 (KAN-40)와 AWS 리소스 코드 (KAN-41, VPC·ECR·RDS·ECS·ALB·알람)
-- 아직 없는 것: CI/CD(`.github/workflows/`), HTTPS/CloudFront, 실제 AWS 계정에 대한 apply 검증
+- 구현된 것: `frontend/` (KAN-37), `backend/` (KAN-38), `docker-compose.yml` (KAN-39), 코스 생성 API `POST /api/v1/courses/generate` (KAN-13), 장소 수집 배치 + AI 큐레이션 (KAN-16), `infra/` Terraform 뼈대 (KAN-40)와 AWS 리소스 코드 (KAN-41, VPC·ECR·RDS·ECS·ALB·알람), GitHub Actions CI/CD (KAN-42, `.github/workflows/`)
+- 아직 없는 것: HTTPS/CloudFront, 실제 AWS 계정에 대한 apply와 워크플로 실행 검증
 - 루트(`ddalkkak-date/`) 하나의 git 저장소로 `frontend/`, `backend/`, `infra/`를 함께 관리합니다. 기본 브랜치는 `main`입니다.
 - 아래 "목표 아키텍처"는 `prd.md` 기준 계획이므로, 코드를 작성하기 전에 해당 디렉터리가 실제로 존재하는지 확인하세요.
 
@@ -88,7 +88,7 @@ docker build -t ddalkkak-backend backend/          # 멀티 스테이지 이미�
 
 - 백엔드: Spring Boot (Java 17, Gradle) + PostgreSQL 15. 초기 설정에서는 Redis를 제외합니다.
 - 컨테이너/배포: 프론트엔드·백엔드 모두 ECS Fargate 서비스입니다. ALB에서 `/api/*`는 백엔드로, 나머지는 프론트엔드로 보냅니다. 프론트엔드는 S3 정적 호스팅이 아닙니다.
-- CI/CD (GitHub Actions): PR에서 CI를 돌리고, 배포는 Docker 빌드 → ECR 푸시(태그는 git SHA) → ECS 태스크 정의 갱신과 롤링 배포 순서입니다. AWS 인증은 OIDC와 IAM Role을 쓰고 장기 키는 쓰지 않습니다.
+- CI/CD (GitHub Actions): PR에서 CI를 돌리고, 배포는 Docker 빌드 → ECR 푸시(태그는 git SHA) → ECS 태스크 정의 갱신과 롤링 배포 순서입니다. AWS 인증은 배포 전용 IAM 사용자의 액세스 키를 GitHub Environment(prod) 시크릿(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)에 두고 씁니다. 키는 Terraform state에 남지 않도록 `cicd` 모듈이 아니라 콘솔/CLI로 발급합니다.
 - Terraform: `infra/modules`와 `infra/envs/prod` 구조에 prod 단일 환경만 두며 dev 환경은 없습니다. `terraform apply`는 CI에서 자동화하지 않고 담당자가 로컬에서 직접 실행합니다. 원격 상태(S3 백엔드)는 쓰지 않고 상태는 로컬 `terraform.tfstate`로 관리합니다(커밋 제외).
 - 인증/정책: 카카오 로그인만 지원합니다. 메인 플로우는 비로그인(게스트)도 쓸 수 있고, 저장·피드백·알림 같은 개인화 기능에서만 로그인 팝업을 띄웁니다. 게스트는 `guest_id` HttpOnly 쿠키로 식별하고 로그인 시 데이터를 이전합니다.
 - 장소 데이터: 카카오 로컬 API와 네이버 로컬 검색 공식 API만 씁니다. 후기는 네이버·카카오(다음) 블로그 검색으로 가져오고, 크롤링과 인스타그램은 쓰지 않습니다.

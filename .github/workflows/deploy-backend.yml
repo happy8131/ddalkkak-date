@@ -1,0 +1,84 @@
+# main 에 backend 변경이 머지되면 이미지를 빌드해 ECR 에 push 하고 ECS 서비스를 롤링 배포한다 (prod)
+# 인증: 배포 전용 IAM 사용자의 액세스 키 (GitHub Environment "prod" 시크릿)
+# 필요 설정: GitHub Environment "prod" 의 시크릿 AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (terraform output github_deploy_user_name 사용자의 키)
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 같은 서비스의 배포가 겹치지 않게 순서대로 실행한다
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: ddalkkak-date-prod/backend
+  ECS_CLUSTER: ddalkkak-date-prod-cluster
+  ECS_SERVICE: ddalkkak-date-prod-backend
+  ECS_TASK_FAMILY: ddalkkak-date-prod-backend
+  CONTAINER_NAME: backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: prod
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AWS 자격 증명
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: ECR 로그인
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: "이미지 빌드와 push (태그: git SHA)"
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build -t "$IMAGE" backend
+          docker push "$IMAGE"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      # Terraform 이 만든 현재 태스크 정의를 내려받아 이미지 필드만 바꾼다
+      - name: 현재 태스크 정의 조회
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_FAMILY" \
+            --query taskDefinition > task-definition.json
+
+      - name: 태스크 정의에 새 이미지 반영
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.image }}
+
+      # 서비스가 안정화될 때까지 기다리고, 실패하면 워크플로도 실패한다.
+      # 실패한 배포는 ECS Deployment Circuit Breaker 가 이전 버전으로 되돌린다
+      - name: ECS 배포 (롤링)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 20

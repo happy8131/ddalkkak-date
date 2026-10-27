@@ -16,7 +16,8 @@ infra/
     ├── ecs/          # ECS Fargate, ALB
     ├── rds/          # RDS PostgreSQL
     ├── secrets/      # 외부 API 키 자리 (SSM SecureString)
-    └── observability/# CloudWatch 알람, SNS
+    ├── observability/# CloudWatch 알람, SNS
+    └── cicd/         # GitHub Actions 배포용 IAM 사용자
 ```
 
 ## 만들어지는 리소스
@@ -31,11 +32,12 @@ infra/
 | `secrets` | 외부 API 키 자리 SSM 파라미터 5개(카카오, LLM, Anthropic, 네이버 ID/Secret). 값은 placeholder이고 별도로 주입 |
 | `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스(CPU 기반 Auto Scaling), ALB, CloudWatch 로그 그룹, 태스크 실행·태스크 역할 |
 | `observability` | SNS 알람 토픽, ALB 5xx 비율 / 비정상 대상 / ECS CPU·메모리 / RDS CPU·연결 수 알람 |
+| `cicd` | 배포 전용 IAM 사용자 (ECR push, ECS 서비스 갱신 권한만. 액세스 키는 Terraform 밖에서 발급) |
 
 - **라우팅:** ALB 80번 포트에서 `/api/*`는 backend(8080), 그 외는 frontend(3000)로 보냅니다. 백엔드 헬스체크(`/actuator/health`)는 ALB가 타겟에 직접 호출하며 외부에는 노출되지 않습니다.
 - **비밀 값:** RDS가 마스터 비밀번호를 Secrets Manager에 직접 만들고 관리합니다(`manage_master_user_password`). 비밀번호는 코드, tfvars, Terraform 변수, state에 나타나지 않고, ECS가 컨테이너 시작 시점에 `DB_USERNAME`, `DB_PASSWORD`로 주입합니다.
 - **알람:** `alarm_email`을 지정하면 SNS 이메일 구독이 만들어지고, 받은 메일의 확인 링크를 눌러야 활성화됩니다. 비워 두면 토픽만 만들어집니다.
-- **배포:** 서비스는 `task_definition`과 `desired_count` 변경을 무시합니다(`ignore_changes`). 이미지 배포는 태스크 정의를 따로 갱신하는 방식이라 Terraform이 되돌리지 않고, 태스크 수는 Auto Scaling이 조정하므로 처음 생성할 때의 값만 씁니다. 배포가 실패하면 Deployment Circuit Breaker가 이전 버전으로 되돌립니다.
+- **배포:** 서비스는 `task_definition`과 `desired_count` 변경을 무시합니다(`ignore_changes`). 이미지 배포는 태스크 정의를 따로 갱신하는 방식이라 Terraform이 되돌리지 않고(GitHub Actions가 태스크 정의를 갱신합니다. 아래 "CI/CD" 참고), 태스크 수는 Auto Scaling이 조정하므로 처음 생성할 때의 값만 씁니다. 배포가 실패하면 Deployment Circuit Breaker가 이전 버전으로 되돌립니다.
 - **헬스체크:** ALB 타겟 그룹(frontend `/`, backend `/actuator/health`)과 컨테이너 헬스체크(task definition)를 둘 다 둡니다. frontend 이미지(`node:slim`)에는 `curl`이 없어서 Node 내장 `fetch`로 확인하고, backend는 `curl`로 확인합니다. backend는 Spring Boot와 Flyway 기동 시간을 위해 시작 유예 시간(120초)을 둡니다.
 - **Auto Scaling:** 서비스마다 평균 CPU 70%를 목표로 하는 목표 추적 정책이며, 초기 범위는 최소 1 / 최대 2개입니다(`*_min_capacity`, `*_max_capacity`로 조정).
 - **IAM 최소 권한:** 태스크 실행 역할은 관리형 `AmazonECSTaskExecutionRolePolicy`(로그·ECR이 모든 리소스에 열려 있음) 대신, 이 스택의 ECR 리포지토리 pull, 로그 그룹 쓰기, DB Secret 읽기만 허용하는 정책을 직접 둡니다. 태스크 역할은 애플리케이션이 AWS API를 쓰지 않아 권한이 없습니다.
@@ -106,6 +108,39 @@ ECR 태그는 **변경 불가(IMMUTABLE)**라서 `latest`처럼 같은 태그를
 5. `http://<ALB DNS>/`(프론트엔드)와 `http://<ALB DNS>/api/v1/...`(백엔드)로 확인하고, CloudWatch Logs `/ecs/ddalkkak-date-prod/*`에서 로그를 봅니다.
 
 같은 태그를 다시 push하면 `ImageTagAlreadyExistsException`으로 실패합니다. 코드를 고쳐 다시 배포할 때는 새 태그로 2~4번을 반복합니다.
+
+## CI/CD (GitHub Actions) 연결
+
+워크플로는 `.github/workflows/`에 있습니다. 인프라(Terraform)는 CI/CD 대상이 아니라서 plan/apply는 여기에 포함되지 않습니다.
+
+| 워크플로 | 시점 | 하는 일 |
+| --- | --- | --- |
+| `ci-frontend.yml` | `frontend/**` 변경 PR | `npm ci`, lint, build |
+| `ci-backend.yml` | `backend/**` 변경 PR | `./gradlew test bootJar` |
+| `deploy-frontend.yml` | `main`에 `frontend/**` 변경 머지 | 이미지 빌드 → ECR push(태그: git SHA) → 태스크 정의 갱신 → 롤링 배포 |
+| `deploy-backend.yml` | `main`에 `backend/**` 변경 머지 | 위와 같음 (backend) |
+
+배포 워크플로는 서비스가 안정화될 때까지 기다리고, 실패하면 워크플로도 실패합니다. 새 태스크가 헬스체크를 통과하지 못하면 ECS Deployment Circuit Breaker가 이전 버전으로 되돌립니다.
+
+인증은 **배포 전용 IAM 사용자의 액세스 키**로 합니다. 사용자(`cicd` 모듈)의 권한은 ECR push와 ECS 서비스 갱신으로 한정되고 Terraform 인프라 변경 권한은 없습니다.
+
+- **키는 Terraform으로 만들지 않습니다.** `aws_iam_access_key`를 쓰면 시크릿 키가 `terraform.tfstate`에 평문으로 남기 때문에, 사용자만 만들고 키는 콘솔이나 CLI로 따로 발급합니다.
+- 장기 키라서 유출되면 만료되지 않습니다. 정기적으로 교체(rotate)하고, 사용자에게는 이 권한 외에 다른 정책을 붙이지 마세요.
+
+### 최초 설정 순서
+
+1. `terraform apply` 후 `terraform output github_deploy_user_name`으로 사용자 이름을 확인합니다.
+2. 그 사용자의 액세스 키를 발급합니다. 콘솔(IAM → 사용자 → 보안 자격 증명 → 액세스 키 만들기)을 권장합니다. 시크릿 키는 발급 화면에서 한 번만 볼 수 있습니다.
+   ```bash
+   aws iam create-access-key --user-name ddalkkak-date-prod-github-deploy
+   ```
+   CLI를 쓰면 출력이 셸 기록과 터미널에 남으니 주의하세요.
+3. GitHub 저장소 → Settings → Environments → **prod**를 만들고 다음을 등록합니다.
+   - Secret `AWS_ACCESS_KEY_ID`: 발급한 액세스 키 ID
+   - Secret `AWS_SECRET_ACCESS_KEY`: 발급한 시크릿 액세스 키
+   - Variable `NEXT_PUBLIC_API_BASE_URL`: 브라우저가 backend를 호출할 주소 (예: `http://<ALB DNS>`). frontend 이미지 빌드 시점에 고정됩니다.
+   - (권장) Deployment branches를 `main`으로 제한합니다. 시크릿이 `prod` 환경에 묶여 있어, 이 설정이 PR 브랜치에서 키를 쓰지 못하게 하는 방어선입니다.
+4. 워크플로가 쓰는 이름(클러스터, 서비스, ECR 리포지토리)은 `ddalkkak-date-prod-*`로 고정되어 있습니다. `project`나 `env`를 바꾸면 `deploy-*.yml`의 `env` 값도 함께 바꿔야 합니다(`terraform test`가 클러스터·서비스 이름이 어긋나면 실패합니다).
 
 ## 테스트 (AWS 호출 없음)
 

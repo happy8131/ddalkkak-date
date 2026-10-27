@@ -19,6 +19,10 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:iam::123456789012:role/mock-role" }
   }
 
+  mock_resource "aws_iam_user" {
+    defaults = { arn = "arn:aws:iam::123456789012:user/mock-user" }
+  }
+
   mock_resource "aws_lb" {
     defaults = {
       arn        = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/mock-alb/0123456789abcdef"
@@ -95,6 +99,22 @@ run "wire_modules" {
   assert {
     condition     = toset(keys(output.ecs_service_names)) == toset(["backend", "frontend"])
     error_message = "ECS 서비스는 frontend, backend 두 개여야 합니다."
+  }
+
+  # .github/workflows/deploy-*.yml 에 적은 클러스터/서비스 이름과 같아야 배포가 동작한다
+  assert {
+    condition     = output.ecs_cluster_name == "ddalkkak-date-prod-cluster"
+    error_message = "ECS 클러스터 이름이 deploy 워크플로의 ECS_CLUSTER 와 다릅니다."
+  }
+
+  assert {
+    condition     = output.ecs_service_names["frontend"] == "ddalkkak-date-prod-frontend" && output.ecs_service_names["backend"] == "ddalkkak-date-prod-backend"
+    error_message = "ECS 서비스 이름이 deploy 워크플로의 ECS_SERVICE 와 다릅니다."
+  }
+
+  assert {
+    condition     = output.github_deploy_user_name == "ddalkkak-date-prod-github-deploy"
+    error_message = "GitHub 배포 IAM 사용자 이름이 출력되어야 합니다."
   }
 
   assert {

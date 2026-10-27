@@ -47,3 +47,8 @@ output "api_key_parameter_names" {
   description = "외부 API 키를 주입할 SSM 파라미터 이름 (키: 파라미터 키). 값은 별도로 넣는다"
   value       = module.secrets.parameter_names
 }
+
+output "github_deploy_user_name" {
+  description = "GitHub Actions 배포용 IAM 사용자 이름. 이 사용자의 액세스 키를 발급해 GitHub Environment(prod) 시크릿에 등록한다"
+  value       = module.cicd.deploy_user_name
+}
