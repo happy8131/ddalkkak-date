@@ -1,6 +1,6 @@
 # main 에 backend 변경이 머지되면 이미지를 빌드해 ECR 에 push 하고 ECS 서비스를 롤링 배포한다 (prod)
-# 인증: GitHub OIDC -> IAM 역할 (장기 액세스 키 없음)
-# 필요 설정: GitHub Environment "prod" 의 시크릿 AWS_DEPLOY_ROLE_ARN (terraform output github_deploy_role_arn)
+# 인증: 배포 전용 IAM 사용자의 액세스 키 (GitHub Environment "prod" 시크릿)
+# 필요 설정: GitHub Environment "prod" 의 시크릿 AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (terraform output github_deploy_user_name 사용자의 키)
 name: Deploy Backend
 
 on:
@@ -12,7 +12,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 # 같은 서비스의 배포가 겹치지 않게 순서대로 실행한다
@@ -36,10 +35,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: AWS 자격 증명 (OIDC)
+      - name: AWS 자격 증명
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: ECR 로그인

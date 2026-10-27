@@ -93,14 +93,12 @@ module "secrets" {
   tags        = local.common_tags
 }
 
-# GitHub Actions 배포용 OIDC 역할 (장기 액세스 키 없음)
+# GitHub Actions 배포용 IAM 사용자 (액세스 키는 Terraform 밖에서 발급)
 module "cicd" {
   source = "../../modules/cicd"
 
-  name_prefix          = local.name_prefix
-  tags                 = local.common_tags
-  github_repository    = var.github_repository
-  create_oidc_provider = var.create_github_oidc_provider
+  name_prefix = local.name_prefix
+  tags        = local.common_tags
 
   ecr_repository_arns = module.ecr.repository_arns
   ecs_service_arns    = module.ecs.service_arns

@@ -17,7 +17,7 @@ infra/
     ├── rds/          # RDS PostgreSQL
     ├── secrets/      # 외부 API 키 자리 (SSM SecureString)
     ├── observability/# CloudWatch 알람, SNS
-    └── cicd/         # GitHub Actions OIDC 역할
+    └── cicd/         # GitHub Actions 배포용 IAM 사용자
 ```
 
 ## 만들어지는 리소스
@@ -32,7 +32,7 @@ infra/
 | `secrets` | 외부 API 키 자리 SSM 파라미터 5개(카카오, LLM, Anthropic, 네이버 ID/Secret). 값은 placeholder이고 별도로 주입 |
 | `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스(CPU 기반 Auto Scaling), ALB, CloudWatch 로그 그룹, 태스크 실행·태스크 역할 |
 | `observability` | SNS 알람 토픽, ALB 5xx 비율 / 비정상 대상 / ECS CPU·메모리 / RDS CPU·연결 수 알람 |
-| `cicd` | GitHub OIDC 공급자와 배포용 IAM 역할 (ECR push, ECS 서비스 갱신 권한만) |
+| `cicd` | 배포 전용 IAM 사용자 (ECR push, ECS 서비스 갱신 권한만. 액세스 키는 Terraform 밖에서 발급) |
 
 - **라우팅:** ALB 80번 포트에서 `/api/*`는 backend(8080), 그 외는 frontend(3000)로 보냅니다. 백엔드 헬스체크(`/actuator/health`)는 ALB가 타겟에 직접 호출하며 외부에는 노출되지 않습니다.
 - **비밀 값:** RDS가 마스터 비밀번호를 Secrets Manager에 직접 만들고 관리합니다(`manage_master_user_password`). 비밀번호는 코드, tfvars, Terraform 변수, state에 나타나지 않고, ECS가 컨테이너 시작 시점에 `DB_USERNAME`, `DB_PASSWORD`로 주입합니다.
@@ -122,16 +122,25 @@ ECR 태그는 **변경 불가(IMMUTABLE)**라서 `latest`처럼 같은 태그를
 
 배포 워크플로는 서비스가 안정화될 때까지 기다리고, 실패하면 워크플로도 실패합니다. 새 태스크가 헬스체크를 통과하지 못하면 ECS Deployment Circuit Breaker가 이전 버전으로 되돌립니다.
 
-인증은 AWS 장기 액세스 키 없이 **GitHub OIDC → IAM 역할**로 합니다. 역할(`cicd` 모듈)은 `github_repository`(기본 `happy8131/ddalkkak-date`)의 **GitHub Environment `prod`**에서 실행된 워크플로만 맡을 수 있고, 권한은 ECR push와 ECS 서비스 갱신으로 한정됩니다.
+인증은 **배포 전용 IAM 사용자의 액세스 키**로 합니다. 사용자(`cicd` 모듈)의 권한은 ECR push와 ECS 서비스 갱신으로 한정되고 Terraform 인프라 변경 권한은 없습니다.
+
+- **키는 Terraform으로 만들지 않습니다.** `aws_iam_access_key`를 쓰면 시크릿 키가 `terraform.tfstate`에 평문으로 남기 때문에, 사용자만 만들고 키는 콘솔이나 CLI로 따로 발급합니다.
+- 장기 키라서 유출되면 만료되지 않습니다. 정기적으로 교체(rotate)하고, 사용자에게는 이 권한 외에 다른 정책을 붙이지 마세요.
 
 ### 최초 설정 순서
 
-1. `terraform apply` 후 `terraform output github_deploy_role_arn`으로 역할 ARN을 확인합니다. 계정에 GitHub OIDC 공급자가 이미 있으면 `create_github_oidc_provider = false`로 apply합니다.
-2. GitHub 저장소 → Settings → Environments → **prod**를 만들고 다음을 등록합니다.
-   - Secret `AWS_DEPLOY_ROLE_ARN`: 위에서 확인한 역할 ARN
+1. `terraform apply` 후 `terraform output github_deploy_user_name`으로 사용자 이름을 확인합니다.
+2. 그 사용자의 액세스 키를 발급합니다. 콘솔(IAM → 사용자 → 보안 자격 증명 → 액세스 키 만들기)을 권장합니다. 시크릿 키는 발급 화면에서 한 번만 볼 수 있습니다.
+   ```bash
+   aws iam create-access-key --user-name ddalkkak-date-prod-github-deploy
+   ```
+   CLI를 쓰면 출력이 셸 기록과 터미널에 남으니 주의하세요.
+3. GitHub 저장소 → Settings → Environments → **prod**를 만들고 다음을 등록합니다.
+   - Secret `AWS_ACCESS_KEY_ID`: 발급한 액세스 키 ID
+   - Secret `AWS_SECRET_ACCESS_KEY`: 발급한 시크릿 액세스 키
    - Variable `NEXT_PUBLIC_API_BASE_URL`: 브라우저가 backend를 호출할 주소 (예: `http://<ALB DNS>`). frontend 이미지 빌드 시점에 고정됩니다.
-   - (권장) Deployment branches를 `main`으로 제한합니다. 신뢰 정책이 `environment:prod`에 묶여 있어 이 설정이 배포 권한의 마지막 방어선입니다.
-3. 워크플로가 쓰는 이름(클러스터, 서비스, ECR 리포지토리)은 `ddalkkak-date-prod-*`로 고정되어 있습니다. `project`나 `env`를 바꾸면 `deploy-*.yml`의 `env` 값도 함께 바꿔야 합니다(`terraform test`가 클러스터·서비스 이름이 어긋나면 실패합니다).
+   - (권장) Deployment branches를 `main`으로 제한합니다. 시크릿이 `prod` 환경에 묶여 있어, 이 설정이 PR 브랜치에서 키를 쓰지 못하게 하는 방어선입니다.
+4. 워크플로가 쓰는 이름(클러스터, 서비스, ECR 리포지토리)은 `ddalkkak-date-prod-*`로 고정되어 있습니다. `project`나 `env`를 바꾸면 `deploy-*.yml`의 `env` 값도 함께 바꿔야 합니다(`terraform test`가 클러스터·서비스 이름이 어긋나면 실패합니다).
 
 ## 테스트 (AWS 호출 없음)
 

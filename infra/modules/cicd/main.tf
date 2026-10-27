@@ -1,58 +1,19 @@
-# GitHub Actions 가 장기 액세스 키 없이 AWS 에 접근하도록 OIDC 공급자와 배포용 IAM 역할을 만든다.
-# 역할은 지정한 저장소의 GitHub Environment(기본 prod)에서 실행된 워크플로만 맡을 수 있고,
+# GitHub Actions 가 ECR push 와 ECS 배포를 할 때 쓰는 배포 전용 IAM 사용자를 만든다.
 # 권한은 이미지 push 와 ECS 서비스 갱신에 필요한 것으로 한정한다.
-# Terraform 변경(plan/apply)은 CI/CD 대상이 아니므로 이 역할에는 인프라 변경 권한이 없다.
+# Terraform 변경(plan/apply)은 CI/CD 대상이 아니므로 이 사용자에게는 인프라 변경 권한이 없다.
+#
+# 액세스 키는 여기서 만들지 않는다. aws_iam_access_key 를 쓰면 시크릿 키가 terraform.tfstate 에 평문으로 남는다.
+# apply 후 콘솔(IAM > 사용자 > 보안 자격 증명) 또는 CLI 로 직접 발급해 GitHub 시크릿에 등록한다.
 
-locals {
-  oidc_host = "token.actions.githubusercontent.com"
-  # 환경(environment) 단위로 제한하면 GitHub 의 환경 보호 규칙(브랜치 제한, 승인)을 함께 쓸 수 있다
-  subject = "repo:${var.github_repository}:environment:${var.github_environment}"
-}
-
-# 계정마다 같은 URL 의 OIDC 공급자는 하나만 만들 수 있다. 이미 있으면 create_oidc_provider = false 로 재사용한다
-resource "aws_iam_openid_connect_provider" "github" {
-  count = var.create_oidc_provider ? 1 : 0
-
-  url            = "https://${local.oidc_host}"
-  client_id_list = ["sts.amazonaws.com"]
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-github-oidc" })
-}
-
-data "aws_iam_openid_connect_provider" "github" {
-  count = var.create_oidc_provider ? 0 : 1
-
-  url = "https://${local.oidc_host}"
-}
-
-locals {
-  oidc_provider_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
-}
-
-resource "aws_iam_role" "deploy" {
+resource "aws_iam_user" "deploy" {
   name = "${var.name_prefix}-github-deploy"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Federated = local.oidc_provider_arn }
-      Action    = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "${local.oidc_host}:aud" = "sts.amazonaws.com"
-          "${local.oidc_host}:sub" = local.subject
-        }
-      }
-    }]
-  })
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-github-deploy" })
 }
 
-resource "aws_iam_role_policy" "deploy" {
+resource "aws_iam_user_policy" "deploy" {
   name = "deploy"
-  role = aws_iam_role.deploy.id
+  user = aws_iam_user.deploy.name
 
   policy = jsonencode({
     Version = "2012-10-17"

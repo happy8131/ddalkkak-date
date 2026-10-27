@@ -19,8 +19,8 @@ mock_provider "aws" {
     defaults = { arn = "arn:aws:iam::123456789012:role/mock-role" }
   }
 
-  mock_resource "aws_iam_openid_connect_provider" {
-    defaults = { arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" }
+  mock_resource "aws_iam_user" {
+    defaults = { arn = "arn:aws:iam::123456789012:user/mock-user" }
   }
 
   mock_resource "aws_lb" {
@@ -113,8 +113,8 @@ run "wire_modules" {
   }
 
   assert {
-    condition     = output.github_deploy_role_arn != ""
-    error_message = "GitHub 배포 역할 ARN 이 출력되어야 합니다."
+    condition     = output.github_deploy_user_name == "ddalkkak-date-prod-github-deploy"
+    error_message = "GitHub 배포 IAM 사용자 이름이 출력되어야 합니다."
   }
 
   assert {
