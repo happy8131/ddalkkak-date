@@ -27,6 +27,16 @@ app:
     api-key: ${ANTHROPIC_API_KEY:}
     model: ${ANTHROPIC_MODEL:claude-haiku-5-5}
 
+# Sentry (KAN-55). SDK는 SENTRY_DSN이 있을 때만 켜진다. dsn과 release는 여기에 쓰지 않고
+# 환경 변수 SENTRY_DSN, SENTRY_RELEASE를 스프링이 그대로 바인딩한다 (DSN이 비어 있는 값으로 켜지는 것을 막는다)
+sentry:
+  environment: ${SENTRY_ENVIRONMENT:local}
+  traces-sample-rate: ${SENTRY_TRACES_SAMPLE_RATE:0.1} # 비용을 고려해 낮게. 0이면 트레이싱 끔
+  send-default-pii: false # IP, 쿠키, 사용자 정보를 자동으로 보내지 않는다 (guest_id 쿠키 보호)
+  # GlobalExceptionHandler(@RestControllerAdvice)가 예외를 먼저 처리하면 Sentry 리졸버가 호출되지 않아
+  # 500 오류가 수집되지 않는다. 가장 앞(HIGHEST_PRECEDENCE)에 두고, 4xx는 SentryEventScrubber가 걸러낸다
+  exception-resolver-order: -2147483648
+
 server:
   port: 8080
   shutdown: graceful

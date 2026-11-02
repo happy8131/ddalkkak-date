@@ -1,5 +1,6 @@
 package com.ddalkkak.date.service.place;
 
+import com.ddalkkak.date.common.exception.ExternalApiException;
 import com.ddalkkak.date.config.KakaoProperties;
 import com.ddalkkak.date.domain.Region;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -11,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 // 카카오 Local API 키워드 검색. 한 질의당 최대 45개(15개 × 3페이지)까지만 돌려준다
 @Component
@@ -44,22 +46,28 @@ public class KakaoPlaceClient {
     List<PlaceBasicInfo> result = new ArrayList<>();
     for (int page = 1; page <= MAX_PAGE; page++) {
       int currentPage = page;
-      KeywordResponse response =
-          restClient
-              .get()
-              .uri(
-                  uri ->
-                      uri.path("/v2/local/search/keyword.json")
-                          .queryParam("query", query)
-                          .queryParam("x", longitude)
-                          .queryParam("y", latitude)
-                          .queryParam("radius", radiusMeters)
-                          .queryParam("page", currentPage)
-                          .queryParam("size", PAGE_SIZE)
-                          .build())
-              .header("Authorization", "KakaoAK " + properties.restApiKey())
-              .retrieve()
-              .body(KeywordResponse.class);
+      KeywordResponse response;
+      try {
+        response =
+            restClient
+                .get()
+                .uri(
+                    uri ->
+                        uri.path("/v2/local/search/keyword.json")
+                            .queryParam("query", query)
+                            .queryParam("x", longitude)
+                            .queryParam("y", latitude)
+                            .queryParam("radius", radiusMeters)
+                            .queryParam("page", currentPage)
+                            .queryParam("size", PAGE_SIZE)
+                            .build())
+                .header("Authorization", "KakaoAK " + properties.restApiKey())
+                .retrieve()
+                .body(KeywordResponse.class);
+      } catch (RestClientException e) {
+        throw new ExternalApiException(
+            ExternalApiException.KAKAO, "카카오 Local API 호출에 실패했습니다: " + e.getMessage(), e);
+      }
       if (response == null || response.documents() == null) {
         break;
       }

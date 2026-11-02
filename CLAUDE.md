@@ -72,6 +72,10 @@ docker build -t ddalkkak-backend backend/          # 멀티 스테이지 이미�
 - 응답은 `ApiResponse`(`success/data/error`)로 통일합니다. `GlobalExceptionHandler`가 `BusinessException`, 검증 오류, 스프링 MVC 표준 예외(404/405 등), 그 외 예외를 같은 형식으로 변환합니다.
 - 프로파일은 `local`(기본)과 `prod`입니다. `prod`는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `CORS_ALLOWED_ORIGINS`를 환경 변수로 받으며 기본값이 없어서 빠지면 기동에 실패합니다.
 - CORS 허용 출처는 `app.cors.allowed-origins` 하나로 `/api/v1/**`와 `/actuator/**`에 함께 적용합니다.
+- Sentry(KAN-55): `sentry-spring-boot-4` 스타터를 씁니다. `SENTRY_DSN`이 있을 때만 켜지고, 없으면(로컬·테스트·CI) 아무것도 전송하지 않습니다. `dsn`과 `release`는 `application.yml`에 쓰지 않고 환경 변수 `SENTRY_DSN`, `SENTRY_RELEASE`를 스프링이 바인딩합니다. `SENTRY_ENVIRONMENT`(기본 `local`), `SENTRY_TRACES_SAMPLE_RATE`(기본 0.1)로 조정합니다.
+  - `sentry.exception-resolver-order`를 `HIGHEST_PRECEDENCE`로 둬야 합니다. 기본 순서에서는 `GlobalExceptionHandler`가 예외를 먼저 처리해서 Sentry가 500을 하나도 받지 못합니다. 바꾸면 `SentryWebLayerTest`가 실패합니다.
+  - `SentryEventScrubber`(`config/`)가 전송 직전에 4xx(`BusinessException`, 스프링 `ErrorResponse`)를 버리고, 쿠키(`guest_id`)·`Authorization` 등 민감 헤더·요청 본문·쿼리 문자열·사용자 정보를 지웁니다. 새 예외 유형을 만들 때 4xx가 노이즈로 전송되지 않는지 확인하세요.
+  - 카카오·LLM 호출 실패는 `ExternalApiException`(`common/exception/`)으로 던지고 Sentry 태그 `external=kakao|llm`으로 구분됩니다. 장소 수집 배치(`PlaceCollectionRunner`)는 상권별 실패와 최종 실패를 `batch=place-collection` 태그로 전송하고 종료 전에 flush합니다.
 - `/actuator/health`는 `/api/v1` 밖에 있습니다. ALB가 `/api/*`만 백엔드로 보내므로, 배포 환경에서 브라우저가 이 경로를 직접 호출하면 프론트엔드로 가게 됩니다. 프론트엔드 `/health` 페이지의 운영 호출 경로는 인프라 작업(KAN-45)에서 정해야 합니다.
 - 코스 생성: `CourseController` → `CourseGenerationService` → `CourseRecommender`. 지금 빈은 `SampleCourseRecommender`(가짜 장소, 제목 `[샘플]`, `place_id`는 `sample-`)뿐이고, KAN-14에서 AI 추천 엔진 빈을 추가하면서 삭제합니다. 추천 호출은 트랜잭션 밖에서 하고 `course_requests`/`courses` 저장만 한 트랜잭션으로 묶습니다.
 - 비로그인 사용자는 `GuestIdCookie`가 발급하는 `guest_id` 쿠키(UUID, HttpOnly·Secure·SameSite=Lax, 1년)로 식별합니다. 값이 UUID 형식이 아니면 새로 발급합니다.
