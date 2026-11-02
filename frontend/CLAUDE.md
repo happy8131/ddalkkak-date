@@ -25,6 +25,11 @@ npx prettier --write .     # 포맷팅
 - API 주소는 `lib/env.ts`의 `API_BASE_URL`로만 읽습니다. 값은 `NEXT_PUBLIC_API_BASE_URL`(기본 `http://localhost:8080`)이고 `.env.example`에 있습니다. `NEXT_PUBLIC_` 값은 빌드 시점에 번들에 박히므로, 컨테이너 이미지에서 주소를 바꾸려면 빌드 인자 처리가 필요합니다.
 - 스타일 토큰은 `tailwind.config` 없이 `app/globals.css`의 `@theme inline`에서 정의합니다. 색상은 `text-primary`, `text-secondary` 같은 유틸리티로 씁니다.
 - `next.config.ts`의 `output: "standalone"`은 ECS Fargate 컨테이너 배포용이라 유지해야 합니다. `cacheComponents`와 `partialPrefetching`도 켜져 있어서, 서버 컴포넌트에서 요청 시점 데이터를 읽으면 Suspense 경계가 필요할 수 있습니다. 지금은 데이터 호출을 모두 클라이언트 컴포넌트에서 하고 있습니다.
+- Sentry(KAN-56): `@sentry/nextjs`로 에러·트레이싱을 수집합니다. 초기화는 `instrumentation-client.ts`(브라우저), `sentry.server.config.ts`(Node), `sentry.edge.config.ts`(엣지)에서 하고, `instrumentation.ts`가 서버·엣지를 등록하며 `onRequestError`로 서버 오류를 보냅니다. `app/global-error.tsx`가 루트 렌더링 오류를 잡습니다. 공통 옵션과 개인정보 제거(`scrubEvent`)는 `lib/sentry.ts` 한 곳에 있습니다.
+  - `NEXT_PUBLIC_SENTRY_DSN`이 비어 있으면 SDK가 꺼져서 아무것도 전송하지 않습니다(로컬, PR CI 빌드). 이 값은 빌드 시점에 번들에 박히므로 운영 이미지는 `--build-arg NEXT_PUBLIC_SENTRY_DSN=...`이 필요합니다.
+  - 쿠키(`guest_id`), 인증 헤더, 요청 본문, 쿼리 문자열, 사용자 정보는 전송 전에 지웁니다. 세션 리플레이는 개인정보 때문에 켜지 않습니다. 새 옵션을 추가할 때도 `lib/sentry.ts`를 거치세요.
+  - `next.config.ts`는 `withSentryConfig`로 감싸져 있습니다. 소스맵 업로드는 `SENTRY_AUTH_TOKEN`이 있는 빌드(배포 워크플로, KAN-57)에서만 동작하고, 업로드 후 소스맵은 삭제됩니다. 토큰이 없으면 업로드를 건너뛰고 빌드는 성공합니다.
+  - `@sentry/bundler-plugins`가 쓰는 `glob`/`minimatch`에 취약점이 있어 `package.json`의 `overrides`로 `glob@^14.0.3`을 지정했습니다. SDK를 올릴 때 `npm audit --omit=dev`가 0건인지 확인하고, 해소되면 override를 지웁니다.
 - `app/health/page.tsx`는 백엔드 연동 확인용 임시 페이지입니다. 호출 경로는 Spring Boot Actuator의 `/actuator/health`입니다.
 - Prettier는 `prettier-plugin-tailwindcss`로 클래스를 자동 정렬하므로, 클래스 순서는 직접 맞추지 말고 포맷터에 맡기세요.
 
