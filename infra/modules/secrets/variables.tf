@@ -18,5 +18,6 @@ variable "parameters" {
     "anthropic-api-key"   = "Anthropic API 키 (AI_PROVIDER=anthropic 으로 Claude 를 쓸 때만)"
     "naver-client-id"     = "네이버 검색 API Client ID (블로그 후기 검색)"
     "naver-client-secret" = "네이버 검색 API Client Secret (블로그 후기 검색)"
+    "sentry-dsn-backend"  = "Sentry DSN (backend 프로젝트, 에러·트레이싱 전송용)"
   }
 }

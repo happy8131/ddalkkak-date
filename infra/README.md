@@ -29,7 +29,7 @@ infra/
 | `network` | VPC, public / private-app / private-db 서브넷, IGW, NAT 게이트웨이(선택), S3 VPC 엔드포인트, 보안 그룹(ALB → ECS → RDS 순으로만 허용) |
 | `ecr` | `frontend`, `backend` 리포지토리 (푸시 시 이미지 스캔, 태그 변경 불가, 태그 없는 이미지 7일 뒤·나머지는 최근 30개만 보관) |
 | `rds` | PostgreSQL 15 `db.t3.medium` (비공개, 암호화, 삭제 보호, 백업 7일, 단일 AZ) |
-| `secrets` | 외부 API 키 자리 SSM 파라미터 5개(카카오, LLM, Anthropic, 네이버 ID/Secret). 값은 placeholder이고 별도로 주입 |
+| `secrets` | 외부 API 키 자리 SSM 파라미터 5개(카카오, LLM, Anthropic, 네이버 ID/Secret)와 Sentry DSN(backend) 자리 1개. 값은 placeholder이고 별도로 주입 |
 | `ecs` | ECS 클러스터(Container Insights), frontend / backend Fargate 서비스(CPU 기반 Auto Scaling), ALB, CloudWatch 로그 그룹, 태스크 실행·태스크 역할 |
 | `observability` | SNS 알람 토픽, ALB 5xx 비율 / 비정상 대상 / ECS CPU·메모리 / RDS CPU·연결 수 알람 |
 | `cicd` | 배포 전용 IAM 사용자 (ECR push, ECS 서비스 갱신 권한만. 액세스 키는 Terraform 밖에서 발급) |
@@ -54,6 +54,13 @@ infra/
   ```
   이후 apply가 주입한 값을 placeholder로 되돌리지 않습니다(`ignore_changes`). 이 키들은 아직 어떤 ECS 태스크에도 주입하지 않습니다. 사용하는 태스크(예: 장소 수집 배치)를 만들 때 `secrets`에 `parameter_arns`를 연결하고 실행 역할에 `ssm:GetParameters` 권한을 추가합니다.
 - **네이버 키:** 장소 수집에서는 네이버 지역 검색을 쓰지 않지만, PRD의 블로그 후기 검색용으로 자리만 만들어 두었습니다.
+- **Sentry (KAN-53):** Sentry 조직 `ddalkkak-date-zz`에 `ddalkkak-backend`, `ddalkkak-frontend` 프로젝트가 있습니다.
+  - **backend DSN:** SSM 파라미터 `/ddalkkak-date-prod/sentry-dsn-backend`에 넣고, `sentry_enabled = true`로 apply하면 backend 태스크에 `SENTRY_DSN`(비밀 값)과 `SENTRY_ENVIRONMENT=prod`가 주입됩니다. 실행 역할에는 이 파라미터 하나에 대한 `ssm:GetParameters`만 추가됩니다. **파라미터에 실제 DSN을 넣은 뒤에 켜세요.** placeholder(`REPLACE_ME`)가 `SENTRY_DSN`으로 주입되면 SDK가 잘못된 DSN으로 기동에 실패할 수 있습니다. 또 backend가 Sentry SDK를 포함한 이미지(KAN-55)로 배포된 뒤에 켜는 것이 순서상 자연스럽습니다.
+  - **frontend DSN:** 브라우저 번들에 들어가는 공개 값이라 SSM에 두지 않고 GitHub Environment(prod) **변수** `NEXT_PUBLIC_SENTRY_DSN`으로 등록합니다(빌드 인자로 전달, KAN-56·57).
+  - **Auth Token:** 소스맵 업로드용 `SENTRY_AUTH_TOKEN`은 GitHub Environment(prod) **시크릿**으로 등록합니다. 최소 권한(릴리스·소스맵 업로드)만 주고, Terraform이나 저장소에는 두지 않습니다(KAN-57).
+  ```bash
+  aws ssm put-parameter --name /ddalkkak-date-prod/sentry-dsn-backend --type SecureString --overwrite --value "<backend DSN>"
+  ```
 
 ### NAT 없이 쓰는 구성 (비용 절감)
 

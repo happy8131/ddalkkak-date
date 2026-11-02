@@ -69,6 +69,9 @@ module "ecs" {
   db_port       = module.rds.port
   db_name       = module.rds.db_name
   db_secret_arn = module.rds.master_user_secret_arn
+
+  # DSN 값을 SSM 에 주입하기 전에는 비워 둔다 (variables.tf 의 sentry_enabled 참고)
+  sentry_dsn_parameter_arn = var.sentry_enabled ? module.secrets.parameter_arns["sentry-dsn-backend"] : ""
 }
 
 module "observability" {

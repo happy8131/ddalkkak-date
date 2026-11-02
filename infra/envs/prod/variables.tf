@@ -62,6 +62,12 @@ variable "db_backup_retention_days" {
   default     = 7
 }
 
+variable "sentry_enabled" {
+  description = "true 면 backend 태스크에 SENTRY_DSN(SSM 파라미터 sentry-dsn-backend)을 주입한다. 파라미터에 실제 DSN 을 넣은 뒤에 켠다 (placeholder 상태에서 켜면 backend 가 기동에 실패할 수 있다)"
+  type        = bool
+  default     = false
+}
+
 variable "enable_nat_gateway" {
   description = "false 면 NAT 게이트웨이를 만들지 않고 ECS 태스크를 공인 IP 가 붙는 퍼블릭 서브넷에 둔다(월 약 $35 절감, 태스크가 인터넷에 직접 노출되는 대신 인바운드는 ALB 만 허용)"
   type        = bool
