@@ -82,6 +82,12 @@ variable "db_secret_arn" {
   type        = string
 }
 
+variable "sentry_dsn_parameter_arn" {
+  description = "backend 의 SENTRY_DSN 으로 주입할 SSM SecureString 파라미터 ARN. 빈 문자열이면 주입하지 않는다 (값이 placeholder 인 채로 주입되면 Sentry SDK 가 기동에 실패할 수 있으므로 실제 값을 넣은 뒤에 켠다)"
+  type        = string
+  default     = ""
+}
+
 # --- 크기 ---
 
 variable "frontend_port" {

@@ -118,8 +118,8 @@ run "wire_modules" {
   }
 
   assert {
-    condition     = length(output.api_key_parameter_names) == 5
-    error_message = "외부 API 키 파라미터 5개가 출력되어야 합니다."
+    condition     = length(output.api_key_parameter_names) == 6
+    error_message = "외부 API 키 파라미터 5개와 Sentry DSN 파라미터가 출력되어야 합니다."
   }
 
   assert {

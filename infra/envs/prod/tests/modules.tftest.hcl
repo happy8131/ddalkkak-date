@@ -505,6 +505,12 @@ run "ecs" {
     error_message = "Secrets 읽기 권한은 DB Secret 하나로 한정되어야 합니다."
   }
 
+  # Sentry 는 파라미터 ARN 을 주기 전까지 꺼져 있다 (placeholder DSN 이 주입되면 기동에 실패할 수 있다)
+  assert {
+    condition     = !strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "SENTRY") && length(jsondecode(aws_iam_role_policy.task_execution.policy).Statement) == 4
+    error_message = "기본값에서는 Sentry 주입과 SSM 읽기 권한이 없어야 합니다."
+  }
+
   # Auto Scaling: 서비스마다 CPU 목표 추적, 최소 1 / 최대 2
   assert {
     condition     = alltrue([for t in aws_appautoscaling_target.this : t.min_capacity == 1 && t.max_capacity == 2])
@@ -559,6 +565,67 @@ run "ecs_public_ip" {
   }
 }
 
+# Sentry DSN 주입: 파라미터 ARN 을 주면 backend 에만 SENTRY_DSN 이 비밀 값으로 들어가고 실행 역할에 읽기 권한이 생긴다
+run "ecs_sentry" {
+  command = apply
+
+  module {
+    source = "../../modules/ecs"
+  }
+
+  variables {
+    name_prefix            = "test"
+    aws_region             = "us-east-1"
+    vpc_id                 = "vpc-12345678"
+    public_subnet_ids      = ["subnet-aaaa1111", "subnet-bbbb2222"]
+    private_app_subnet_ids = ["subnet-cccc3333", "subnet-dddd4444"]
+    alb_security_group_id  = "sg-11111111"
+    app_security_group_id  = "sg-22222222"
+    repository_urls = {
+      frontend = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test/frontend"
+      backend  = "123456789012.dkr.ecr.us-east-1.amazonaws.com/test/backend"
+    }
+    repository_arns = {
+      frontend = "arn:aws:ecr:us-east-1:123456789012:repository/test/frontend"
+      backend  = "arn:aws:ecr:us-east-1:123456789012:repository/test/backend"
+    }
+    db_address               = "test-postgres.abcdefg.us-east-1.rds.amazonaws.com"
+    db_port                  = 5432
+    db_name                  = "ddalkkak"
+    db_secret_arn            = "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-test-AbCdEf"
+    sentry_dsn_parameter_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/test/sentry-dsn-backend"
+  }
+
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"name\":\"SENTRY_DSN\",\"valueFrom\":\"arn:aws:ssm:us-east-1:123456789012:parameter/test/sentry-dsn-backend\"")
+    error_message = "SENTRY_DSN 은 SSM 파라미터에서 주입해야 합니다."
+  }
+
+  assert {
+    condition     = !strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"name\":\"SENTRY_DSN\",\"value\"")
+    error_message = "SENTRY_DSN 이 평문 환경 변수로 들어가면 안 됩니다."
+  }
+
+  assert {
+    condition     = strcontains(aws_ecs_task_definition.this["backend"].container_definitions, "\"name\":\"SENTRY_ENVIRONMENT\",\"value\":\"prod\"")
+    error_message = "SENTRY_ENVIRONMENT 가 prod 여야 합니다."
+  }
+
+  assert {
+    condition     = !strcontains(aws_ecs_task_definition.this["frontend"].container_definitions, "SENTRY")
+    error_message = "frontend 태스크에는 Sentry 비밀 값을 주입하지 않습니다 (DSN 은 빌드 시점에 번들에 들어간다)."
+  }
+
+  # 읽기 권한은 이 파라미터 하나로만 한정한다
+  assert {
+    condition = anytrue([
+      for st in jsondecode(aws_iam_role_policy.task_execution.policy).Statement :
+      st.Sid == "ReadSentryDsn" && st.Action == "ssm:GetParameters" && st.Resource == "arn:aws:ssm:us-east-1:123456789012:parameter/test/sentry-dsn-backend"
+    ])
+    error_message = "실행 역할에 Sentry DSN 파라미터 하나에 대한 ssm:GetParameters 권한이 있어야 합니다."
+  }
+}
+
 # --- secrets ---
 
 run "secrets" {
@@ -572,10 +639,10 @@ run "secrets" {
     name_prefix = "test"
   }
 
-  # 카카오, LLM, Anthropic, 네이버 키 자리가 SecureString 으로 만들어진다
+  # 카카오, LLM, Anthropic, 네이버 키와 Sentry DSN 자리가 SecureString 으로 만들어진다
   assert {
-    condition     = toset(keys(aws_ssm_parameter.this)) == toset(["kakao-rest-api-key", "llm-api-key", "anthropic-api-key", "naver-client-id", "naver-client-secret"])
-    error_message = "외부 API 키 자리 5개가 있어야 합니다."
+    condition     = toset(keys(aws_ssm_parameter.this)) == toset(["kakao-rest-api-key", "llm-api-key", "anthropic-api-key", "naver-client-id", "naver-client-secret", "sentry-dsn-backend"])
+    error_message = "외부 API 키 자리 5개와 Sentry DSN 자리가 있어야 합니다."
   }
 
   assert {
@@ -595,7 +662,7 @@ run "secrets" {
   }
 
   assert {
-    condition     = length(output.parameter_arns) == 5
+    condition     = length(output.parameter_arns) == 6
     error_message = "파라미터 ARN 이 출력되어야 합니다."
   }
 }

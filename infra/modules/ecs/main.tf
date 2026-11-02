@@ -29,6 +29,10 @@ locals {
 }
 
 locals {
+  sentry_enabled = var.sentry_dsn_parameter_arn != ""
+}
+
+locals {
   # 서비스마다 환경 변수가 달라서 객체로 따로 둔다 (조건식은 양쪽 타입이 같아야 해서 쓰지 않는다)
   container_extras = {
     frontend = {
@@ -46,17 +50,23 @@ locals {
       }
     }
     backend = {
-      environment = [
-        { name = "SPRING_PROFILES_ACTIVE", value = "prod" },
-        { name = "DB_URL", value = "jdbc:postgresql://${var.db_address}:${var.db_port}/${var.db_name}" },
-        # HTTPS 도입 전이라 ALB 주소(http)를 허용 출처로 쓴다
-        { name = "CORS_ALLOWED_ORIGINS", value = "http://${aws_lb.this.dns_name}" },
-      ]
-      # 비밀번호는 코드에 두지 않고 컨테이너 시작 시점에 Secrets Manager 에서 주입한다
-      secrets = [
-        { name = "DB_USERNAME", valueFrom = "${var.db_secret_arn}:username::" },
-        { name = "DB_PASSWORD", valueFrom = "${var.db_secret_arn}:password::" },
-      ]
+      environment = concat(
+        [
+          { name = "SPRING_PROFILES_ACTIVE", value = "prod" },
+          { name = "DB_URL", value = "jdbc:postgresql://${var.db_address}:${var.db_port}/${var.db_name}" },
+          # HTTPS 도입 전이라 ALB 주소(http)를 허용 출처로 쓴다
+          { name = "CORS_ALLOWED_ORIGINS", value = "http://${aws_lb.this.dns_name}" },
+        ],
+        local.sentry_enabled ? [{ name = "SENTRY_ENVIRONMENT", value = "prod" }] : [],
+      )
+      # 비밀번호는 코드에 두지 않고 컨테이너 시작 시점에 Secrets Manager / SSM 에서 주입한다
+      secrets = concat(
+        [
+          { name = "DB_USERNAME", valueFrom = "${var.db_secret_arn}:username::" },
+          { name = "DB_PASSWORD", valueFrom = "${var.db_secret_arn}:password::" },
+        ],
+        local.sentry_enabled ? [{ name = "SENTRY_DSN", valueFrom = var.sentry_dsn_parameter_arn }] : [],
+      )
       # eclipse-temurin 이미지에는 curl 이 있다. Spring Boot + Flyway 기동 시간을 startPeriod 로 기다린다
       healthCheck = {
         command     = ["CMD-SHELL", "curl -fsS http://localhost:${var.backend_port}/actuator/health || exit 1"]
@@ -120,7 +130,7 @@ resource "aws_iam_role_policy" "task_execution" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid      = "EcrLogin"
         Effect   = "Allow"
@@ -149,7 +159,16 @@ resource "aws_iam_role_policy" "task_execution" {
         Action   = "secretsmanager:GetSecretValue"
         Resource = var.db_secret_arn
       },
-    ]
+      ],
+      # 이 스택이 주입하는 SSM 파라미터 하나로만 범위를 좁힌다
+      local.sentry_enabled ? [
+        {
+          Sid      = "ReadSentryDsn"
+          Effect   = "Allow"
+          Action   = "ssm:GetParameters"
+          Resource = var.sentry_dsn_parameter_arn
+        },
+    ] : [])
   })
 }
 
