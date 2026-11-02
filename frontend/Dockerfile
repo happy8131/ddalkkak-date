@@ -16,6 +16,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # NEXT_PUBLIC_* 값은 빌드 시점에 번들에 포함되므로 빌드 인자로 받는다
 ARG NEXT_PUBLIC_API_BASE_URL
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+# Sentry DSN도 브라우저 번들에 박힌다. 비워 두면 Sentry가 꺼진 채로 빌드된다.
+# 소스맵 업로드용 SENTRY_AUTH_TOKEN은 이미지 이력에 남지 않도록 ARG가 아니라 빌드 시크릿으로 받는다 (KAN-57)
+ARG NEXT_PUBLIC_SENTRY_DSN
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 COPY . .
 RUN mkdir -p public && npm run build
 
