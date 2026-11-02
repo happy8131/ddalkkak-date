@@ -1,5 +1,6 @@
 package com.ddalkkak.date.service.ai;
 
+import com.ddalkkak.date.common.exception.ExternalApiException;
 import com.ddalkkak.date.config.LlmProperties;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -78,7 +79,8 @@ public class OpenAiCompatibleClient implements LlmClient {
         }
         sleep(Math.max(waitSeconds, 1) * 1000);
       } catch (RestClientException e) {
-        throw new IllegalStateException("LLM API 호출에 실패했습니다: " + e.getMessage(), e);
+        throw new ExternalApiException(
+            ExternalApiException.LLM, "LLM API 호출에 실패했습니다: " + e.getMessage(), e);
       }
     }
     if (response == null || response.choices() == null || response.choices().isEmpty()) {

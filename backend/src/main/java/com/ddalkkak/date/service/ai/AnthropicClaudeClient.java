@@ -1,5 +1,6 @@
 package com.ddalkkak.date.service.ai;
 
+import com.ddalkkak.date.common.exception.ExternalApiException;
 import com.ddalkkak.date.config.AnthropicProperties;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -56,7 +57,8 @@ public class AnthropicClaudeClient implements LlmClient {
               .retrieve()
               .body(MessagesResponse.class);
     } catch (RestClientException e) {
-      throw new IllegalStateException("Claude API 호출에 실패했습니다: " + e.getMessage(), e);
+      throw new ExternalApiException(
+          ExternalApiException.LLM, "Claude API 호출에 실패했습니다: " + e.getMessage(), e);
     }
     if (response == null || response.content() == null) {
       throw new IllegalStateException("Claude API 응답이 비어 있습니다.");

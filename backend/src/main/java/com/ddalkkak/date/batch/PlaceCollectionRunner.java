@@ -4,6 +4,7 @@ import com.ddalkkak.date.domain.Region;
 import com.ddalkkak.date.service.place.PlaceCollectionService;
 import com.ddalkkak.date.service.place.PlaceCollectionService.CurationBatchResult;
 import com.ddalkkak.date.service.place.PlaceCollectionService.RegionResult;
+import io.sentry.Sentry;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
 public class PlaceCollectionRunner implements ApplicationRunner {
 
   private static final Logger log = LoggerFactory.getLogger(PlaceCollectionRunner.class);
+  private static final long FLUSH_TIMEOUT_MILLIS = 5000;
 
   private final PlaceCollectionService collectionService;
 
@@ -42,6 +44,7 @@ public class PlaceCollectionRunner implements ApplicationRunner {
       } catch (RuntimeException e) {
         failedRegions.add(region);
         log.error("장소 수집 실패: {}", region.label(), e);
+        reportToSentry(e, region.label());
       }
     }
 
@@ -54,9 +57,26 @@ public class PlaceCollectionRunner implements ApplicationRunner {
 
     // 실패가 있으면 비정상 종료해서 ECS 태스크가 실패로 남게 한다
     if (!failedRegions.isEmpty() || curation.failed() > 0) {
-      throw new IllegalStateException(
-          "장소 수집 배치에 실패가 있습니다. 수집 실패 상권=%s, 큐레이션 실패=%d곳"
-              .formatted(failedRegions, curation.failed()));
+      IllegalStateException failure =
+          new IllegalStateException(
+              "장소 수집 배치에 실패가 있습니다. 수집 실패 상권=%s, 큐레이션 실패=%d곳"
+                  .formatted(failedRegions, curation.failed()));
+      reportToSentry(failure, null);
+      // 곧 프로세스가 종료되므로 전송이 끝날 때까지 기다린다
+      Sentry.flush(FLUSH_TIMEOUT_MILLIS);
+      throw failure;
     }
+  }
+
+  // Sentry가 꺼져 있으면(DSN 없음) 아무 일도 하지 않는다
+  private static void reportToSentry(Throwable e, String region) {
+    Sentry.withScope(
+        scope -> {
+          scope.setTag("batch", "place-collection");
+          if (region != null) {
+            scope.setTag("region", region);
+          }
+          Sentry.captureException(e);
+        });
   }
 }
