@@ -69,6 +69,7 @@ docker build -t ddalkkak-backend backend/          # 멀티 스테이지 이미�
 - 스키마는 Flyway(`src/main/resources/db/migration`)로만 바꿉니다. `ddl-auto`는 `validate`라서 엔티티와 스키마가 다르면 기동이 실패합니다.
 - `controller` 패키지의 모든 컨트롤러에는 `WebConfig`가 `/api/v1` 접두사를 자동으로 붙입니다. 컨트롤러에는 `/api/v1`을 직접 쓰지 않습니다.
 - API JSON 필드는 `spring.jackson.property-naming-strategy: SNAKE_CASE`로 전역 snake_case입니다(PRD 스펙과 동일). DTO에 `@JsonProperty`를 따로 달지 않습니다. 검증 오류 메시지의 필드명도 snake_case로 바꿔서 보여줍니다.
+- API 문서: springdoc(`springdoc-openapi-starter-webmvc-ui` 3.x)이 Swagger UI(`/swagger-ui.html`)와 명세(`/v3/api-docs`)를 자동 생성합니다. 이 경로들은 `/api/v1` 밖이고 `prod` 프로파일에서는 꺼져 있습니다. 새 컨트롤러·DTO에는 `@Operation`, `@Schema`로 설명과 예시를 답니다. springdoc은 Jackson 2 기반이라 `SNAKE_CASE` 설정을 따르지 않으므로, `OpenApiConfig`의 `OpenApiCustomizer`가 스키마 속성명을 snake_case로 바꿉니다(`OpenApiDocsWebLayerTest`가 검증). 손으로 쓴 `docs/api/course-api.yaml`은 참고용 스냅샷이라 코드와 어긋날 수 있습니다.
 - 응답은 `ApiResponse`(`success/data/error`)로 통일합니다. `GlobalExceptionHandler`가 `BusinessException`, 검증 오류, 스프링 MVC 표준 예외(404/405 등), 그 외 예외를 같은 형식으로 변환합니다.
 - 프로파일은 `local`(기본)과 `prod`입니다. `prod`는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `CORS_ALLOWED_ORIGINS`를 환경 변수로 받으며 기본값이 없어서 빠지면 기동에 실패합니다.
 - CORS 허용 출처는 `app.cors.allowed-origins` 하나로 `/api/v1/**`와 `/actuator/**`에 함께 적용합니다.
