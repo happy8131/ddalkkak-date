@@ -13,3 +13,10 @@ management:
   endpoint:
     health:
       show-details: never
+
+# API 문서(Swagger UI, /v3/api-docs)는 운영에 노출하지 않는다
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

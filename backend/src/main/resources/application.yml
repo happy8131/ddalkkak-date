@@ -53,3 +53,9 @@ management:
     health:
       probes:
         enabled: true
+
+# springdoc (Swagger UI: /swagger-ui.html, 명세: /v3/api-docs). 운영에서는 application-prod.yml에서 끈다
+springdoc:
+  swagger-ui:
+    operations-sorter: method
+    tags-sorter: alpha

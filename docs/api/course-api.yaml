@@ -1,0 +1,424 @@
+openapi: 3.0.3
+info:
+  title: 데이트 딸깍 코스 API
+  description: |
+    AI 기반 데이트 코스 추천 서비스 "데이트 딸깍"의 코스 생성 API 명세서입니다.
+
+    - 모든 응답은 `ApiResponse`(`success` / `data` / `error`) 형식으로 통일됩니다.
+    - JSON 필드명은 전역 snake_case입니다.
+    - 비로그인(게스트)도 사용할 수 있으며, `guest_id` 쿠키로 사용자를 식별합니다. (PRD FR-1.3)
+    - 현재 추천 엔진은 임시 구현(`SampleCourseRecommender`)입니다. 응답의 제목은 `[샘플]`로 시작하고
+      `place_id`는 `sample-`로 시작합니다. AI 추천 엔진(KAN-14)이 붙으면 실제 장소로 바뀝니다.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080/api/v1
+    description: 로컬 개발 서버
+  - url: /api/v1
+    description: 배포 환경 (ALB가 /api/* 를 백엔드로 전달)
+tags:
+  - name: Course
+    description: 데이트 코스 API
+
+paths:
+  /courses/generate:
+    post:
+      tags:
+        - Course
+      operationId: generateCourses
+      summary: 사용자의 조건에 맞는 데이트 코스를 AI를 통해 생성합니다.
+      description: |
+        지역, 데이트 유형, 예산을 받아 데이트 코스 후보 여러 개(현재 3개)를 생성하고 결과를 저장합니다.
+
+        **동작 방식**
+        1. 요청의 `guest_id` 쿠키가 유효한 UUID이면 그대로 쓰고, 없거나 형식이 틀리면 새로 발급해
+           `Set-Cookie` 헤더로 내려줍니다. (HttpOnly, Secure, SameSite=Lax, Path=/, 유효기간 1년)
+        2. 추천 엔진을 호출해 코스를 만듭니다. 이 호출은 DB 트랜잭션 밖에서 실행됩니다.
+        3. 요청 기록(`course_requests`)과 코스(`courses`)를 한 트랜잭션으로 저장합니다.
+
+        **참고**
+        - 로그인 기능(KAN-25) 전까지 `user_id`는 항상 비어 있습니다.
+        - 값이 아직 없는 선택 필드(`route_map_url`, `review_summary`, `kakao_place_url`, `trust_score`)는
+          응답에서 키 자체가 빠집니다. (`null`로 내려가지 않음)
+      parameters:
+        - $ref: '#/components/parameters/GuestIdCookie'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CourseGenerateRequest'
+            examples:
+              hongdaeCulture:
+                summary: 홍대 문화데이트, 예산 10만원
+                value:
+                  region: 홍대
+                  date_type: 문화데이트
+                  budget: 100000
+      responses:
+        '200':
+          description: 코스 생성 성공
+          headers:
+            Set-Cookie:
+              description: |
+                요청에 유효한 `guest_id` 쿠키가 없을 때만 내려갑니다.
+                예) `guest_id=3f2b8c1e-9d4a-4e6b-8a57-1c2d3e4f5a6b; Max-Age=31536000; Path=/; Secure; HttpOnly; SameSite=Lax`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseGenerateApiResponse'
+              examples:
+                success:
+                  summary: 홍대 문화데이트 / 10만원 (코스 3개 중 1개만 표기)
+                  value:
+                    success: true
+                    data:
+                      request_id: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                      generated_at: '2026-11-05T03:21:45Z'
+                      courses:
+                        - course_id: 0b6f5b1e-2c3d-4f8a-9a41-6d7e8f9a0b1c
+                          title: '[샘플] 홍대 전시 산책 코스'
+                          places:
+                            - place_id: sample-culture-0-0
+                              name: 홍대 소규모 갤러리
+                              category: 전시
+                              address: 서울 홍대 일대
+                              estimated_cost: 25000
+                              estimated_time: 1.5시간
+                            - place_id: sample-culture-0-1
+                              name: 홍대 디저트 카페
+                              category: 카페
+                              address: 서울 홍대 일대
+                              estimated_cost: 25000
+                              estimated_time: 1시간
+                            - place_id: sample-culture-0-2
+                              name: 홍대 파스타 레스토랑
+                              category: 식당
+                              address: 서울 홍대 일대
+                              estimated_cost: 50000
+                              estimated_time: 1.5시간
+                          total_cost: 100000
+                          total_time: 4시간
+        '400':
+          description: |
+            요청 검증 실패. 필수값 누락, 지원하지 않는 지역·데이트 유형, 예산 범위 초과,
+            JSON 형식 오류 등이 해당합니다. 검증 오류는 첫 번째 필드 오류만 `message`에 담기며
+            필드명은 snake_case로 표시됩니다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+              examples:
+                unsupportedRegion:
+                  summary: 지원하지 않는 지역
+                  value:
+                    success: false
+                    error:
+                      code: INVALID_REQUEST
+                      message: 'region: 지원하지 않는 지역입니다.'
+                unsupportedDateType:
+                  summary: 지원하지 않는 데이트 유형
+                  value:
+                    success: false
+                    error:
+                      code: INVALID_REQUEST
+                      message: 'date_type: 지원하지 않는 데이트 유형입니다.'
+                budgetTooLow:
+                  summary: 예산이 하한 미만
+                  value:
+                    success: false
+                    error:
+                      code: INVALID_REQUEST
+                      message: 'budget: 30,000원 이상이어야 합니다.'
+                budgetTooHigh:
+                  summary: 예산이 상한 초과
+                  value:
+                    success: false
+                    error:
+                      code: INVALID_REQUEST
+                      message: 'budget: 300,000원 이하여야 합니다.'
+                malformedBody:
+                  summary: 본문이 JSON이 아니거나 타입이 맞지 않음
+                  value:
+                    success: false
+                    error:
+                      code: INVALID_REQUEST
+                      message: 잘못된 요청입니다.
+        '405':
+          description: POST 이외의 HTTP 메서드로 호출함
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+              example:
+                success: false
+                error:
+                  code: INVALID_REQUEST
+                  message: 잘못된 요청입니다.
+        '500':
+          description: 서버 내부 오류. 상세 원인은 응답에 노출하지 않고 Sentry로 수집됩니다.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorApiResponse'
+              example:
+                success: false
+                error:
+                  code: INTERNAL_ERROR
+                  message: 서버 오류가 발생했습니다.
+
+components:
+  parameters:
+    GuestIdCookie:
+      name: guest_id
+      in: cookie
+      required: false
+      description: |
+        비로그인 사용자를 식별하는 쿠키입니다. UUID 형식이어야 하며, 없거나 형식이 틀리면
+        서버가 새로 발급해 `Set-Cookie`로 내려줍니다. 브라우저가 자동으로 보내므로
+        프론트엔드가 직접 설정하지 않습니다.
+      schema:
+        type: string
+        format: uuid
+        example: 3f2b8c1e-9d4a-4e6b-8a57-1c2d3e4f5a6b
+
+  schemas:
+    CourseGenerateRequest:
+      type: object
+      description: 데이트 코스 생성 요청 (PRD FR-2.1)
+      required:
+        - region
+        - date_type
+        - budget
+      properties:
+        region:
+          type: string
+          description: |
+            데이트 지역. 서울 5대 상권의 한글 표기로 전달합니다. 비어 있으면 안 됩니다.
+          enum:
+            - 홍대
+            - 강남
+            - 성수
+            - 연남
+            - 이태원
+          example: 홍대
+        date_type:
+          type: string
+          description: |
+            데이트 유형. 한글 표기로 전달합니다. 비어 있으면 안 됩니다.
+          enum:
+            - 문화데이트
+            - 맛집투어
+            - 액티비티
+            - 감성데이트
+          example: 문화데이트
+        budget:
+          type: integer
+          format: int32
+          description: 1인이 아닌 코스 전체 기준 총예산(원). 30,000원 이상 300,000원 이하.
+          minimum: 30000
+          maximum: 300000
+          example: 100000
+
+    CourseGenerateResponse:
+      type: object
+      description: 코스 생성 결과 (PRD FR-2.2)
+      required:
+        - request_id
+        - generated_at
+        - courses
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: 이번 생성 요청의 식별자(`course_requests.id`).
+          example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+        generated_at:
+          type: string
+          format: date-time
+          description: 요청이 기록된 시각. UTC 기준이며 초 단위로 잘립니다.
+          example: '2026-11-05T03:21:45Z'
+        courses:
+          type: array
+          description: 생성된 코스 후보 목록. 현재 3개가 내려갑니다.
+          items:
+            $ref: '#/components/schemas/Course'
+
+    Course:
+      type: object
+      description: 추천된 데이트 코스 1개
+      required:
+        - course_id
+        - title
+        - places
+        - total_cost
+        - total_time
+      properties:
+        course_id:
+          type: string
+          description: 코스 식별자(UUID 문자열).
+          example: 0b6f5b1e-2c3d-4f8a-9a41-6d7e8f9a0b1c
+        title:
+          type: string
+          description: 코스 제목. 임시 추천 엔진 단계에서는 `[샘플]`로 시작합니다.
+          example: '[샘플] 홍대 전시 산책 코스'
+        places:
+          type: array
+          description: 방문 순서대로 나열된 장소 목록.
+          items:
+            $ref: '#/components/schemas/Place'
+        total_cost:
+          type: integer
+          format: int32
+          description: 코스 전체 예상 비용(원). 임시 추천 엔진은 요청 예산과 같은 값을 줍니다.
+          example: 100000
+        total_time:
+          type: string
+          description: 코스 전체 예상 소요 시간.
+          example: 4시간
+        route_map_url:
+          type: string
+          format: uri
+          description: 동선 지도 URL. 아직 제공하지 않아 응답에서 빠집니다.
+          nullable: true
+
+    Place:
+      type: object
+      description: 코스에 포함된 장소
+      required:
+        - place_id
+        - name
+        - category
+        - address
+        - estimated_cost
+        - estimated_time
+      properties:
+        place_id:
+          type: string
+          description: 장소 식별자. 임시 추천 엔진에서는 `sample-`로 시작합니다.
+          example: sample-culture-0-0
+        name:
+          type: string
+          description: 장소 이름.
+          example: 홍대 소규모 갤러리
+        category:
+          type: string
+          description: 장소 분류(전시, 카페, 식당 등).
+          example: 전시
+        address:
+          type: string
+          description: 장소 주소.
+          example: 서울 홍대 일대
+        estimated_cost:
+          type: integer
+          format: int32
+          description: 해당 장소의 예상 비용(원). 산책처럼 무료인 장소는 0입니다.
+          example: 25000
+        estimated_time:
+          type: string
+          description: 해당 장소의 예상 소요 시간.
+          example: 1.5시간
+        kakao_place_url:
+          type: string
+          format: uri
+          description: 카카오맵 장소 URL. 값이 없으면 응답에서 빠집니다.
+          example: https://place.map.kakao.com/12345678
+        trust_score:
+          type: number
+          format: double
+          description: 장소 신뢰도 점수. 값이 없으면 응답에서 빠집니다.
+          example: 4.3
+        review_summary:
+          $ref: '#/components/schemas/ReviewSummary'
+
+    ReviewSummary:
+      type: object
+      description: 블로그 후기 요약. 아직 채우지 않아(KAN-21 예정) 현재는 응답에서 빠집니다.
+      properties:
+        review_count_30d:
+          type: integer
+          format: int32
+          description: 최근 30일 후기 수.
+          example: 12
+        last_reviewed_at:
+          type: string
+          description: 가장 최근 후기 작성일.
+          example: '2026-11-01'
+        reviews:
+          type: array
+          items:
+            $ref: '#/components/schemas/Review'
+
+    Review:
+      type: object
+      description: 블로그 후기 1건
+      properties:
+        title:
+          type: string
+          description: 후기 제목.
+          example: 홍대 갤러리 데이트 후기
+        snippet:
+          type: string
+          description: 후기 본문 일부.
+          example: 조용하고 작품 수가 적당해서 둘이 얘기하며 보기 좋았어요.
+        link:
+          type: string
+          format: uri
+          description: 후기 원문 링크.
+          example: https://blog.naver.com/example/123456789
+        source:
+          type: string
+          description: 후기 출처(네이버, 카카오 등).
+          example: naver
+        posted_at:
+          type: string
+          description: 후기 작성일.
+          example: '2026-11-01'
+
+    CourseGenerateApiResponse:
+      type: object
+      description: 성공 응답 공통 형식(`ApiResponse`)에 코스 생성 결과를 담은 것
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          description: 성공 여부. 항상 true입니다.
+          example: true
+        data:
+          $ref: '#/components/schemas/CourseGenerateResponse'
+
+    ErrorApiResponse:
+      type: object
+      description: 실패 응답 공통 형식(`ApiResponse`). `data`는 내려가지 않습니다.
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          description: 성공 여부. 항상 false입니다.
+          example: false
+        error:
+          $ref: '#/components/schemas/ApiError'
+
+    ApiError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: 오류 코드.
+          enum:
+            - INVALID_REQUEST
+            - NOT_FOUND
+            - INTERNAL_ERROR
+          example: INVALID_REQUEST
+        message:
+          type: string
+          description: 사용자에게 보여줄 수 있는 오류 메시지.
+          example: 'budget: 30,000원 이상이어야 합니다.'
